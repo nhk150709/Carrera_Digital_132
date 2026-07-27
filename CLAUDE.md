@@ -1,13 +1,60 @@
 # Carrera Digital 132 — Controller Communication Project
 
-This repo is for building custom Arduino/microcontroller devices that talk
-to a Carrera Digital 132/124 slot-car track's Control Unit (CU), for
-race-management features Carrera doesn't sell (fuel-stop LED panel + pit
-animatronics, lap timer/ranking display, derail stop buttons, custom
-variable-speed pace car). The repo currently has no firmware yet — the
-research below is the foundation the firmware should be built on.
+This repo is for building custom Arduino/microcontroller devices and a
+Python race-management app that talk to a Carrera Digital 132/124 slot-car
+track's Control Unit (CU), for race-management features Carrera doesn't
+sell (fuel-stop LED panel + pit animatronics, lap timer/ranking display,
+derail stop buttons, custom variable-speed pace car).
 
 Full detail and sources: [`docs/reference/`](docs/reference/README.md).
+Run/setup instructions: [`README.md`](README.md).
+
+## The app (`app/`)
+
+A FastAPI-based race-management server lives in `app/` (see `README.md`
+for how to run it). It's the "single bridge/hub node" described below,
+made concrete:
+
+- `app/cu/` — hardware-agnostic CU client interface, a `MockCUClient`
+  simulator (no hardware needed to develop/test against), and
+  `CarreralibCUClient` wrapping the real `carreralib` package.
+- `app/race/` — pure, hardware-free race logic: state machine, lap/rank/
+  delta/penalty engine, fuel model (tyre wear + acceleration based, not
+  just the CU's own lap-time-based fuel sim), weather mode, input recorder
+  + pace-car ghost replay. Fully unit tested (`tests/`).
+- `app/controllers/` — local gamepad (pygame) and browser-based
+  (WebSocket) player input, each with its own sensitivity curve.
+- `app/network/` — the FastAPI server (REST + WebSocket + the browser UI
+  in `app/static/`) and the Arduino-facing serial protocol
+  (`arduino_api.py`; example sketches in `arduino/`).
+
+Key facts learned by actually installing and reading `carreralib` 1.0.3's
+source (more reliable than the web research below, which hit blocked
+pages on this point):
+
+- `ControlUnit.setspeed(address, value)` / `setbrake` / `setfuel` place
+  **no address restriction beyond the protocol's own 0-7 range** — the
+  library will happily send a command for addresses 0-5. This does **not**
+  confirm the CU firmware honors it for a slot with a live physical/
+  wireless controller attached (still unconfirmed, still needs a real-
+  hardware test) — but it's less restricted than earlier research assumed.
+  `CarreralibCUClient.set_speed()` blocks 0-5 by default; pass
+  `allow_unconfirmed_controller_writes=True` to try anyway.
+- `setfuel(address, value)` can **override** the CU's own displayed fuel
+  value per car — this is how the app's custom fuel model can drive the
+  real CU/LED fuel display instead of just reading it.
+- Real `Timer.sector` values: **1 = start/finish** (not 0), 2/3 = Check
+  Lane splits. `app/race/engine.py` uses its own sector==0-means-lap
+  convention internally for simplicity/testability; the CU adapter
+  translates 1→0 at the boundary.
+- The CU's `start` status field is a **0-9 state code** for its own
+  built-in start-light sequence — useful context, though this app drives
+  its own independent 5-light Arduino sequence
+  (`app/network/server.py::_run_start_sequence`) rather than depending on
+  reading that field.
+- `press(PACE_CAR_ESC_BUTTON_ID)` simulates the CU's own Pace Car/ESC
+  button; `setpos()`/`setlap()`/`clrpos()` drive an official Carrera
+  **Position Tower** accessory, if one is ever added.
 
 ## Key facts (see `docs/reference/protocol-notes.md` for full detail)
 

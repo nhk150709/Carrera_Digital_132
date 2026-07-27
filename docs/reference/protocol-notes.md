@@ -26,20 +26,28 @@ out of it. Projects in this folder tap one or the other — don't mix them up.
   port at a time** — wired and AppConnect are mutually exclusive, and
   AppConnect itself accepts only a single simultaneous BLE connection (you
   cannot have the phone app and a Pi connected at once).
-- Protocol is message-based:
-  - **Status** message: `fuel` (tuple of 8 ints, one per address), `pit`
-    (tuple of 8 bools), `start` (0/1), `mode`, `display`.
+- Protocol is message-based (confirmed by installing `carreralib` 1.0.3
+  and reading its source directly — see `carreralib.md` for full detail):
+  - **Status** message: `fuel` (tuple of 8 ints **0-15**, one per
+    address), `pit` (tuple of 8 bools), `start` (**0-9** state code for
+    the CU's own start-light sequence, not a simple 0/1), `mode`, `display`.
   - **Timer** message: `address`, `timestamp` (ms), `sector` — emitted on
-    every lap/sector crossing. Ranking/position is *derived* from these
-    (no single "rank" field), not read directly.
+    every lap/sector crossing. **`sector == 1` means start/finish**, 2/3
+    mean Check Lane splits (earlier draft of this doc guessed 0; that was
+    wrong). Ranking/position is *derived* from these (no single "rank"
+    field), not read directly.
   - **Addressing** is zero-based: `0–5` = controllers 1–6, `6` = the
-    **autonomous car** slot, `7` = the **pace car** slot. Both 6 and 7 can
-    be commanded (e.g. speed) over this same connection — this is the
-    mechanism Carrera's own ghost-car / pace-car features use.
-  - Speed/command updates to a car are rate-limited to roughly **75ms**
-    between updates.
-  - Write-side commands exist too (not just polling) — e.g. `start()` to
-    start/pause a race, as used by race-management tools like SmartRace and
+    **autonomous car** slot, `7` = the **pace car** slot. `setspeed()` in
+    the library accepts all of 0-7 with no extra restriction — but that
+    only proves the library will *send* the command for 0-5, not that the
+    CU firmware honors it over a live physical/wireless controller on
+    that slot. Confirmed-safe for software speed control: 6 and 7 only.
+  - Speed/command rate limit: ~75ms was a figure from secondary web
+    sources; **not found in the `carreralib` source itself** — treat as a
+    sensible default to use, not a confirmed hard limit.
+  - Write-side commands exist too (not just polling) — e.g. `start()`
+    (presses the CU's own START/ENTER button) to start/pause a race, as
+    used by race-management tools like SmartRace and
     PCLapCounter to control the CU, not just read it.
 
 ### 2. Track rail signal (direct tap)
