@@ -41,6 +41,7 @@ class WebInputMessage(BaseModel):
     brake: float = 0.0
     lane_change: bool = False
     stop_pressed: bool = False
+    overtake_pressed: bool = False
 
 
 class RecordingStartRequest(BaseModel):
@@ -53,3 +54,37 @@ class PaceCarPlayRequest(BaseModel):
     address: int = 7
     speed_scale: float = 1.0
     loop: bool = False
+
+
+class StrategyRequest(BaseModel):
+    fuel_load: float = 100.0
+    compound: str = "medium"  # "soft" | "medium" | "hard"
+    planned_pit_laps: list[int] = []
+
+
+class StrategyRecommendRequest(BaseModel):
+    total_laps: int
+    avg_lap_seconds: float = 6.0
+
+
+class PitRequest(BaseModel):
+    in_pit: bool
+
+
+class SafetyCarRequest(BaseModel):
+    action: str  # "trigger" | "end"
+
+
+class SafetyCarConfigRequest(BaseModel):
+    physically_present: bool = False
+    field_speed_cap: int = 5
+    random_trigger_chance_per_lap: float = 0.0
+
+
+class ForecastRequest(BaseModel):
+    total_laps: int
+    num_changes: int = 2
+
+
+class GhostRequest(BaseModel):
+    recording_name: str

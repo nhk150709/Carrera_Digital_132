@@ -35,6 +35,41 @@ machine with Python -- that:
   start sensor) -- see `app/network/arduino_api.py` and `arduino/` for
   example sketches.
 
+Race-strategy layer on top of that core loop:
+
+- **fuel/tyres**: fuel never regenerates mid-race (only a pre-race fuel
+  *load* choice, which costs top speed while the tank is fuller -- burns
+  off as it's used); tyres are the only pit-serviceable resource, and
+  wear now visibly cuts top speed and braking as it climbs, not just fuel
+  drain rate. Three compounds (soft/medium/hard) trade grip for wear rate.
+- **weather**: a track-wide grip cap (existing "weather mode") plus a
+  separate per-car tyre/weather match bonus or penalty, and a lap-count-
+  based forecast (`app/race/forecast.py`) -- scheduled against the race
+  *leader's lap number*, not wall-clock time, with a calibrated confidence
+  players have to gamble on (a "70% chance of rain by lap 20" forecast
+  really is right ~70% of the time, not just flavor text).
+- **strategy planning**: a pre-race plan per car (fuel load, compound,
+  planned pit laps) with a lap-by-lap fuel/tyre projection graph (planned
+  vs actual) in the UI, plus a "recommended" balanced default for
+  newcomers, derived from the same simulation constants the race actually
+  runs on (`app/race/strategy.py`).
+- **push-to-pass**: a ~5s throttle boost triggerable from the player's own
+  screen, at a heavy fuel/tyre cost and a cooldown (`app/race/overtake.py`).
+- **safety car**: a virtual field-wide speed cap (works with zero extra
+  hardware), or a real physical pace-car command if one is actually
+  sitting on the track (`app/race/safety_car.py`) -- see the honesty note
+  below on what triggering it actually does.
+- **reliability**: a low-probability random breakdown forcing a car to a
+  dead stop until it's serviced in the pit (`app/race/reliability.py`).
+- **qualifying**: an optional mode ranked by best lap, producing a grid
+  order for display -- entirely skippable, Race/Time Attack don't require
+  it.
+- **ghost delta**: live gap to a recorded lap, updated at each lap
+  boundary (see the honesty note below on why it's not continuous).
+- **sound/voice**: browser-native text-to-speech (Web Speech API -- free,
+  offline, no API keys) plus optional user-supplied short clips for pit/
+  repair/breakdown/final-lap/race-win events (`app/static/sound.js`).
+
 ### Run it
 
 ```bash
@@ -82,3 +117,15 @@ guard logic is covered.
   only detect it from (a) a locally-attached controller's own raw input,
   or (b) a dedicated Arduino start-line sensor sending `EARLY <addr>` --
   not from CU telemetry alone.
+- **Safety car placement**: triggering the safety car only ever *commands*
+  speed to whatever's already sitting at the pace-car address (7) -- the
+  CU cannot place a car onto the track by itself. If `physically_present`
+  is False (the default), triggering it only applies the field-wide
+  virtual caution; a physical pace car has to be put on the track by hand
+  beforehand for the "real car slows down" part to mean anything.
+- **Ghost delta is lap-boundary, not continuous**: the CU only reports
+  discrete lap/sector crossings, not continuous position, so the ghost
+  comparison updates once per lap (or per Check Lane sector, if
+  configured) -- not smoothly like a telemetry-based delta bar in a sim.
+  True continuous tracking would need either Check Lane hardware or a
+  separate continuous position source (e.g. a camera-based system).

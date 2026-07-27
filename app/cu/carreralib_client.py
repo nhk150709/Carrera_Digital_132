@@ -97,6 +97,11 @@ class CarreralibCUClient(CUClient):
         self._cu.setspeed(address, max(0, min(15, value)))
 
     def set_brake(self, address: int, value: int) -> None:
+        if address in CONTROLLER_ADDRESSES and not self.allow_unconfirmed_controller_writes:
+            raise UnsupportedCommand(
+                f"set_brake to controller address {address} is unconfirmed against real "
+                "hardware; pass allow_unconfirmed_controller_writes=True to try it anyway"
+            )
         assert self._cu is not None, "not connected"
         self._cu.setbrake(address, max(0, min(15, value)))
 

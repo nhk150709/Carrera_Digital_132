@@ -18,14 +18,19 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.requests import HTTPConnection
 
+from app.controllers.base import ControllerInput
 from app.controllers.web import WebController
 from app.cu.mock_client import MockCUClient
 from app.network import schemas
 from app.network.arduino_api import ArduinoBridge
 from app.network.state_view import serialize
+from app.race.forecast import generate_forecast
+from app.race.fuel import TyreCompound
 from app.race.models import RaceMode, RaceState, WeatherLevel
 from app.race.pace_car import PaceCarPlayback
+from app.race.safety_car import SafetyCarConfig
 from app.race.session import RaceSession, SessionConfig
+from app.race.strategy import RaceStrategy, recommend_strategy
 
 logger = logging.getLogger("carrera_rms")
 
@@ -138,6 +143,7 @@ async def _run_start_sequence(app: FastAPI) -> None:
     bridge: ArduinoBridge | None = app.state.arduino_bridge
 
     def publish(phase: str) -> None:
+        session.set_start_phase(phase)
         if bridge is not None:
             bridge.publish_start_phase(phase)
 
@@ -291,6 +297,109 @@ async def api_pace_car_stop(request: Request) -> dict:
     return {"ok": True}
 
 
+@app.post("/api/cars/{address}/strategy")
+async def api_strategy_set(address: int, body: schemas.StrategyRequest, request: Request) -> dict:
+    session = get_session(request)
+    if address not in session.engine.cars:
+        raise HTTPException(404, f"no car at address {address}")
+    try:
+        compound = TyreCompound(body.compound)
+    except ValueError:
+        raise HTTPException(422, f"unknown compound {body.compound!r}")
+    session.apply_strategy(RaceStrategy(
+        address=address, fuel_load=body.fuel_load, compound=compound,
+        planned_pit_laps=list(body.planned_pit_laps),
+    ))
+    return {"ok": True}
+
+
+@app.get("/api/cars/{address}/strategy/recommend")
+async def api_strategy_recommend(address: int, total_laps: int, avg_lap_seconds: float = 6.0) -> dict:
+    plan = recommend_strategy(address, total_laps, avg_lap_seconds)
+    return {
+        "fuel_load": plan.fuel_load,
+        "compound": plan.compound.value,
+        "planned_pit_laps": plan.planned_pit_laps,
+    }
+
+
+@app.get("/api/cars/{address}/strategy/graph")
+async def api_strategy_graph(address: int, total_laps: int, request: Request,
+                                avg_lap_seconds: float = 6.0) -> dict:
+    session = get_session(request)
+    strategy = session.strategy_book.get(address) or recommend_strategy(address, total_laps, avg_lap_seconds)
+    from app.race.strategy import project_plan
+
+    projected = project_plan(strategy, total_laps, avg_lap_seconds)
+    actual = [
+        {"lap": lap.lap_number, "fuel": lap.fuel_at_lap, "tyre_wear": lap.tyre_wear_at_lap}
+        for lap in session.engine.cars[address].laps
+    ] if address in session.engine.cars else []
+    return {
+        "planned": [{"lap": p.lap, "fuel": p.fuel, "tyre_wear": p.tyre_wear} for p in projected],
+        "actual": actual,
+        "weather_forecast": session.forecast.visible_forecast() if session.forecast else [],
+    }
+
+
+@app.post("/api/cars/{address}/pit")
+async def api_pit(address: int, body: schemas.PitRequest, request: Request) -> dict:
+    get_session(request).set_in_pit(address, body.in_pit)
+    return {"ok": True}
+
+
+@app.post("/api/race/safety_car")
+async def api_safety_car(body: schemas.SafetyCarRequest, request: Request) -> dict:
+    session = get_session(request)
+    if body.action == "trigger":
+        session.safety_car.trigger()
+    elif body.action == "end":
+        session.safety_car.end()
+    else:
+        raise HTTPException(422, f"unknown action {body.action!r}")
+    return {"ok": True}
+
+
+@app.post("/api/race/safety_car/config")
+async def api_safety_car_config(body: schemas.SafetyCarConfigRequest, request: Request) -> dict:
+    session = get_session(request)
+    session.safety_car.physically_present = body.physically_present
+    session.safety_car.config = SafetyCarConfig(
+        field_speed_cap=body.field_speed_cap,
+        random_trigger_chance_per_lap=body.random_trigger_chance_per_lap,
+    )
+    return {"ok": True}
+
+
+@app.post("/api/race/forecast")
+async def api_forecast_generate(body: schemas.ForecastRequest, request: Request) -> dict:
+    session = get_session(request)
+    session.set_forecast(generate_forecast(body.total_laps, body.num_changes, rng=session._rng))
+    return {"ok": True, "forecast": session.forecast.visible_forecast()}
+
+
+@app.post("/api/race/forecast/clear")
+async def api_forecast_clear(request: Request) -> dict:
+    get_session(request).set_forecast(None)
+    return {"ok": True}
+
+
+@app.post("/api/cars/{address}/ghost")
+async def api_ghost_set(address: int, body: schemas.GhostRequest, request: Request) -> dict:
+    session = get_session(request)
+    try:
+        session.set_ghost(address, body.recording_name)
+    except FileNotFoundError:
+        raise HTTPException(404, f"no recording named {body.recording_name!r}")
+    return {"ok": True}
+
+
+@app.post("/api/cars/{address}/ghost/clear")
+async def api_ghost_clear(address: int, request: Request) -> dict:
+    get_session(request).clear_ghost(address)
+    return {"ok": True}
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket) -> None:
     await manager.connect(ws)
@@ -303,11 +412,10 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 except Exception:
                     continue
                 controller = get_or_create_web_controller(ws, msg.controller_id)
-                from app.controllers.base import ControllerInput
-
                 controller.push(ControllerInput(
                     throttle=msg.throttle, brake=msg.brake,
                     lane_change=msg.lane_change, stop_pressed=msg.stop_pressed,
+                    overtake_pressed=msg.overtake_pressed,
                 ))
     except WebSocketDisconnect:
         manager.disconnect(ws)

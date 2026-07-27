@@ -10,6 +10,7 @@ class ControllerInput:
     brake: float = 0.0  # 0..1
     lane_change: bool = False
     stop_pressed: bool = False
+    overtake_pressed: bool = False  # push-to-pass
 
 
 class InputController(ABC):

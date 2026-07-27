@@ -19,9 +19,15 @@ made concrete:
   simulator (no hardware needed to develop/test against), and
   `CarreralibCUClient` wrapping the real `carreralib` package.
 - `app/race/` — pure, hardware-free race logic: state machine, lap/rank/
-  delta/penalty engine, fuel model (tyre wear + acceleration based, not
-  just the CU's own lap-time-based fuel sim), weather mode, input recorder
-  + pace-car ghost replay. Fully unit tested (`tests/`).
+  delta/penalty engine, fuel model (tyre wear + acceleration based, fuel
+  never regenerates mid-race, only a pre-race load choice), tyre compounds
+  + weather-match performance, weather mode + lap-count-based forecast
+  (`forecast.py`), strategy planning + projection (`strategy.py`),
+  push-to-pass (`overtake.py`), safety car (`safety_car.py`), random
+  breakdowns (`reliability.py`), qualifying grid order, input recorder +
+  pace-car ghost replay + live ghost delta (`ghost.py`). Fully unit tested
+  (`tests/`); see `README.md` for the full feature list and honesty notes
+  on what's simulated vs. hardware-confirmed.
 - `app/controllers/` — local gamepad (pygame) and browser-based
   (WebSocket) player input, each with its own sensitivity curve.
 - `app/network/` — the FastAPI server (REST + WebSocket + the browser UI

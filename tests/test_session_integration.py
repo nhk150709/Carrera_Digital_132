@@ -21,6 +21,9 @@ def make_session(addresses=(0, 1)):
     cu = MockCUClient(addresses=list(addresses), base_lap_time=1.0, clock=clock)
     cu.connect()
     session = RaceSession(cu, SessionConfig(addresses=list(addresses)), clock=clock)
+    # These tests predate the random-breakdown feature and aren't testing
+    # it; keep them deterministic rather than depending on RNG luck.
+    session.reliability.config.breakdown_chance_per_second = 0.0
     return session, cu
 
 
@@ -107,6 +110,7 @@ def test_unsupported_command_is_logged_not_raised():
         def read_status(self): return Status(fuel=(0,), pit=(False,), start=0, mode=0, display=1)
         def poll_timer(self): return []
         def set_speed(self, address, value): raise UnsupportedCommand("nope")
+        def set_brake(self, address, value): raise UnsupportedCommand("nope")
         def set_fuel_display(self, address, value): raise UnsupportedCommand("nope")
         def start(self): pass
 

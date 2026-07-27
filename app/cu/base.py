@@ -40,6 +40,10 @@ class CUClient(ABC):
         """value in 0..15."""
 
     @abstractmethod
+    def set_brake(self, address: int, value: int) -> None:
+        """value in 0..15."""
+
+    @abstractmethod
     def set_fuel_display(self, address: int, value: int) -> None:
         """Override the CU's own displayed fuel value for `address`
         (0..15) -- lets our own tyre/acceleration-based fuel model drive

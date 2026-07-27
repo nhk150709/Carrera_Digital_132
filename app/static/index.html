@@ -15,6 +15,7 @@
   <select id="mode-select">
     <option value="race">Race mode</option>
     <option value="time_attack">Time attack mode</option>
+    <option value="qualifying">Qualifying (optional)</option>
   </select>
 
   <select id="weather-select">
@@ -26,11 +27,24 @@
   <button id="debug-toggle">Debug</button>
 </header>
 
+<div id="start-lights" class="start-lights">
+  <div class="light" data-n="1"></div>
+  <div class="light" data-n="2"></div>
+  <div class="light" data-n="3"></div>
+  <div class="light" data-n="4"></div>
+  <div class="light" data-n="5"></div>
+</div>
+
+<div id="stop-banner" class="stop-banner"></div>
+<div id="safety-car-banner" class="safety-car-banner"></div>
+
 <div class="controls">
   <button class="btn-go" id="go-btn">GREEN &#9654; GO</button>
   <button class="btn-stop" id="stop-btn">STOP</button>
   <button id="resume-btn">Resume</button>
   <button id="reset-btn">Reset</button>
+  <button id="safety-car-btn">Safety Car</button>
+  <button id="safety-car-end-btn">End Safety Car</button>
 </div>
 
 <main>
@@ -48,6 +62,49 @@
     <section>
       <h2>Cars &amp; controllers</h2>
       <div class="cars" id="car-grid"></div>
+    </section>
+
+    <section>
+      <h2>Race strategy planner</h2>
+      <div class="row">
+        <label>Car</label>
+        <select id="strategy-car-select"></select>
+        <label>Total laps</label>
+        <input type="number" id="strategy-total-laps" value="20" min="1" style="width:5em">
+        <label>Avg lap (s)</label>
+        <input type="number" id="strategy-avg-lap" value="6.0" step="0.5" style="width:5em">
+        <button id="strategy-recommend-btn">Use recommended (balanced) plan</button>
+      </div>
+      <div class="row">
+        <label>Fuel load</label>
+        <input type="range" id="strategy-fuel-load" min="0" max="100" step="1" value="100">
+        <span id="strategy-fuel-load-val">100</span>
+        <label>Compound</label>
+        <select id="strategy-compound">
+          <option value="soft">Soft (fast, wears quick)</option>
+          <option value="medium" selected>Medium</option>
+          <option value="hard">Hard (slow, lasts)</option>
+        </select>
+        <label>Pit laps (comma-sep)</label>
+        <input type="text" id="strategy-pit-laps" placeholder="e.g. 10, 22" style="width:8em">
+        <button id="strategy-save-btn">Save strategy</button>
+      </div>
+      <p style="color:var(--muted); font-size:0.85rem">
+        Match your compound to the weather forecast below for a speed/brake
+        bonus -- mismatched tyres (e.g. soft in the wet) cost you both.
+        New to this? "Use recommended plan" gives an evenly-balanced
+        default assuming no overtake-boost usage.
+      </p>
+      <canvas id="strategy-graph" width="900" height="260"></canvas>
+    </section>
+
+    <section>
+      <h2>Weather forecast (by leader's lap, not clock time)</h2>
+      <div class="row">
+        <button id="forecast-generate-btn">Generate random forecast</button>
+        <button id="forecast-clear-btn">Clear forecast</button>
+      </div>
+      <div id="forecast-list" class="row"></div>
     </section>
 
     <section>
@@ -78,7 +135,7 @@
       <div id="debug-log"></div>
     </section>
 
-    <section>
+    <section id="personal-screen">
       <h2>Your controller</h2>
       <div class="row">
         <label>Controller ID</label>
@@ -90,16 +147,30 @@
         <input type="text" id="my-car-name" placeholder="driver name">
         <button id="assign-btn">Assign</button>
       </div>
+
+      <div id="personal-start-lights" class="start-lights"></div>
+      <div id="personal-overtake-banner" class="overtake-banner">OVERTAKE MODE</div>
+
       <p style="color:var(--muted); font-size:0.85rem">
         Hold W / Up for throttle, S / Down for brake, A for lane change,
-        Space for STOP -- or use the on-screen pedals (touch-friendly).
-        Works from any device on the local network, each with its own
-        Controller ID.
+        Space for STOP -- or use the big on-screen pedals below (built for
+        a phone screen). Works from any device on the local network, each
+        with its own Controller ID.
       </p>
+
       <div class="pedals">
         <button class="pedal-brake" id="pedal-brake">BRAKE</button>
         <button class="pedal-throttle" id="pedal-throttle">THROTTLE</button>
       </div>
+
+      <button id="overtake-btn" class="btn-overtake">PUSH TO PASS</button>
+      <div id="overtake-status" class="overtake-status"></div>
+
+      <div class="row">
+        <button id="pit-toggle-btn">Enter Pit</button>
+        <span id="ghost-delta-display"></span>
+      </div>
+
       <div class="row">
         <label>Throttle curve</label>
         <input type="range" id="sens-throttle-exp" min="0.3" max="3" step="0.1" value="1">
@@ -118,10 +189,19 @@
         <button id="rec-stop">Stop &amp; save recording</button>
         <input type="text" id="rec-name" placeholder="recording name" value="lap1">
       </div>
+      <div class="row">
+        <input type="text" id="ghost-name" placeholder="ghost recording name">
+        <button id="ghost-set-btn">Set ghost</button>
+        <button id="ghost-clear-btn">Clear ghost</button>
+      </div>
+      <div class="row">
+        <label><input type="checkbox" id="sound-enable" checked> Sound &amp; voice</label>
+      </div>
     </section>
   </div>
 </main>
 
+<script src="/static/sound.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

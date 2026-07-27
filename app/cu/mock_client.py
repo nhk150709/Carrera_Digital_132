@@ -24,6 +24,7 @@ class MockCUClient(CUClient):
         self.base_lap_time = base_lap_time
         self.clock = clock
         self._speed: dict[int, int] = {a: DEFAULT_SPEED for a in addresses}
+        self._brake: dict[int, int] = {a: 0 for a in addresses}
         self._fuel: dict[int, int] = {a: 15 for a in addresses}
         self._fuel_override: dict[int, int] = {}
         self._pit: dict[int, bool] = {a: False for a in addresses}
@@ -76,6 +77,9 @@ class MockCUClient(CUClient):
 
     def set_speed(self, address: int, value: int) -> None:
         self._speed[address] = max(0, min(15, value))
+
+    def set_brake(self, address: int, value: int) -> None:
+        self._brake[address] = max(0, min(15, value))
 
     def set_fuel_display(self, address: int, value: int) -> None:
         self._fuel_override[address] = max(0, min(15, value))

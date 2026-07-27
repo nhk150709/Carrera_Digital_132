@@ -11,6 +11,7 @@ from enum import Enum
 class RaceMode(str, Enum):
     RACE = "race"
     TIME_ATTACK = "time_attack"
+    QUALIFYING = "qualifying"
 
 
 class RaceState(str, Enum):
@@ -40,6 +41,8 @@ class LapRecord:
     lap_time: float  # seconds
     timestamp: float  # engine-clock seconds since race start
     sector: int = 0
+    fuel_at_lap: float = 0.0
+    tyre_wear_at_lap: float = 0.0
 
 
 @dataclass

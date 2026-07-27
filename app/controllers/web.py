@@ -28,4 +28,5 @@ class WebController(InputController):
             brake=self.curve.apply_brake(self._raw.brake),
             lane_change=self._raw.lane_change,
             stop_pressed=self._raw.stop_pressed,
+            overtake_pressed=self._raw.overtake_pressed,
         )

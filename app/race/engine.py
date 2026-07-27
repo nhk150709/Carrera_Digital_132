@@ -32,6 +32,7 @@ class RaceEngine:
         self.go_timestamp: float | None = None
         self.finish_order: list[int] = []
         self.log: list[str] = []
+        self.last_stop_triggered_by: int | None = None
 
     def _emit(self, message: str) -> None:
         self.log.append(message)
@@ -55,10 +56,12 @@ class RaceEngine:
         self.state = RaceState.IDLE
         self.go_timestamp = None
         self.finish_order.clear()
+        self.last_stop_triggered_by = None
         self._emit("race reset")
 
     def begin_countdown(self, now: float) -> None:
         self.state = RaceState.COUNTDOWN
+        self.last_stop_triggered_by = None
         self._emit(f"countdown armed at t={now:.2f}")
 
     def go(self, now: float) -> None:
@@ -89,6 +92,7 @@ class RaceEngine:
         if self.state not in (RaceState.RUNNING, RaceState.COUNTDOWN):
             return
         self.state = RaceState.PAUSED
+        self.last_stop_triggered_by = triggered_by
         self._emit(f"race stopped ({reason}) at t={now:.2f} by address={triggered_by}")
         if penalize_trigger and triggered_by is not None and triggered_by in self.cars:
             self.penalty_engine.race_stopped_by(self.cars[triggered_by], now)
@@ -164,11 +168,23 @@ class RaceEngine:
                 best = b
         return best
 
+    def grid_order(self) -> list[int]:
+        """Addresses sorted by best lap, fastest first -- the starting
+        grid a QUALIFYING session produces, for display when carried into
+        a following RACE session. Cars with no timed lap sort last, in
+        address order."""
+        cars = list(self.cars.values())
+        ranked = sorted(
+            cars,
+            key=lambda c: (c.best_lap is None, c.best_lap if c.best_lap is not None else float("inf"), c.address),
+        )
+        return [c.address for c in ranked]
+
     def rankings(self) -> list[RankingEntry]:
         cars = list(self.cars.values())
         session_best = self._session_best_lap()
 
-        if self.mode == RaceMode.TIME_ATTACK:
+        if self.mode in (RaceMode.TIME_ATTACK, RaceMode.QUALIFYING):
             ranked = sorted(
                 cars,
                 key=lambda c: (c.best_lap is None, c.best_lap if c.best_lap is not None else float("inf")),
