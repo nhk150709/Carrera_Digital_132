@@ -45,6 +45,7 @@ class RaceSession:
         self._pace_start_time: float | None = None
         self.debug_log: list[str] = []
         self._last_tick: float | None = None
+        self.last_input: dict[int, tuple[float, float]] = {}  # address -> (throttle, brake)
 
     def _log(self, message: str) -> None:
         self.debug_log.append(f"{self.clock():.2f} {message}")
@@ -94,6 +95,7 @@ class RaceSession:
             if car is None:
                 continue
             inp = controller.poll()
+            self.last_input[address] = (inp.throttle, inp.brake)
 
             if self.engine.state == RaceState.COUNTDOWN and inp.throttle > EARLY_MOVEMENT_THRESHOLD:
                 self.engine.report_early_movement(address, now)

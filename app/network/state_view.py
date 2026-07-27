@@ -28,6 +28,8 @@ def serialize(session: RaceSession) -> dict:
                 "best_lap": car.best_lap,
                 "penalty_seconds": car.total_penalty_seconds,
                 "recording": session.recorder.is_recording(addr),
+                "throttle": session.last_input.get(addr, (0.0, 0.0))[0],
+                "brake": session.last_input.get(addr, (0.0, 0.0))[1],
             }
             for addr, car in engine.cars.items()
         },

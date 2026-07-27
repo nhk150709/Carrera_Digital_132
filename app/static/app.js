@@ -65,6 +65,10 @@ function render(state) {
       <div class="bar fuel"><div style="width:${car.fuel}%"></div></div>
       <div>Tyre wear ${Math.round(car.tyre_wear)}%</div>
       <div class="bar tyre"><div style="width:${car.tyre_wear}%"></div></div>
+      <div>Throttle ${Math.round(car.throttle * 100)}%</div>
+      <div class="bar fuel"><div style="width:${car.throttle * 100}%; background:#2ea043"></div></div>
+      <div>Brake ${Math.round(car.brake * 100)}%</div>
+      <div class="bar fuel"><div style="width:${car.brake * 100}%; background:#da3633"></div></div>
       <div>${car.in_pit ? "IN PIT" : ""} ${car.recording ? "REC" : ""}</div>
     `;
     grid.appendChild(card);

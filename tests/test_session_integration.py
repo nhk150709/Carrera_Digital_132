@@ -48,6 +48,16 @@ def test_full_race_flow_produces_laps_and_ranking():
     assert session.engine.cars[0].fuel < 100.0  # fuel drained while driving
 
 
+def test_last_input_reflects_current_throttle_and_brake():
+    session, cu = make_session(addresses=(0,))
+    p0 = WebController("p0")
+    session.assign_controller(0, p0)
+    session.go()
+    p0.push(ControllerInput(throttle=0.6, brake=0.2))
+    session.tick()
+    assert session.last_input[0] == (0.6, 0.2)
+
+
 def test_stop_button_pauses_race_and_can_penalize_trigger():
     session, cu = make_session(addresses=(0,))
     clock: _FakeClock = session.clock
