@@ -48,15 +48,29 @@ def _warm_ble_cache(address: str, timeout: float = 4.0) -> None:
     working (observed in practice: works immediately after a manual scan,
     fails a minute later). A short scan immediately before connecting
     keeps that cache fresh and avoids the failure.
+
+    connect() (and therefore this) needs to work whether it's called from
+    plain synchronous code (a standalone test script) or, as in the real
+    app, from inside FastAPI/uvicorn's already-running event loop during
+    startup -- asyncio.run() cannot be nested inside a running loop, so
+    the scan runs in its own dedicated thread with its own fresh loop
+    (the same pattern carreralib's own BLE connection uses internally),
+    which works safely in either case.
     """
     import asyncio
+    import threading
 
     from bleak import BleakScanner
 
     async def scan() -> None:
         await BleakScanner.discover(timeout=timeout)
 
-    asyncio.run(scan())
+    def run_in_new_loop() -> None:
+        asyncio.run(scan())
+
+    thread = threading.Thread(target=run_in_new_loop)
+    thread.start()
+    thread.join()
 
 
 class CarreralibCUClient(CUClient):
