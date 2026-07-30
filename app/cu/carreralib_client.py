@@ -80,13 +80,34 @@ class CarreralibCUClient(CUClient):
         self._cu = None
         self._clock_offset_ms: float | None = None
 
-    def connect(self) -> None:
+    def connect(self, ble_connect_attempts: int = 4) -> None:
         import carreralib  # lazy import: not a hard dependency for mock-mode use
 
-        if _looks_like_ble_address(self.device):
-            _warm_ble_cache(self.device)
+        if not _looks_like_ble_address(self.device):
+            self._cu = carreralib.ControlUnit(self.device)
+            self._clock_offset_ms = None
+            return
 
-        self._cu = carreralib.ControlUnit(self.device)
+        # Even immediately after a scan, BlueZ can apparently still drop
+        # the device from its cache before carreralib's own connection
+        # attempt reaches it (observed in practice) -- so in addition to
+        # warming the cache, retry the whole scan+connect sequence a
+        # few times rather than failing on the first race.
+        from bleak.exc import BleakDeviceNotFoundError
+
+        last_error: Exception | None = None
+        for attempt in range(1, ble_connect_attempts + 1):
+            _warm_ble_cache(self.device)
+            try:
+                self._cu = carreralib.ControlUnit(self.device)
+                self._clock_offset_ms = None
+                return
+            except BleakDeviceNotFoundError as exc:
+                last_error = exc
+        raise RuntimeError(
+            f"could not connect to BLE device {self.device} after "
+            f"{ble_connect_attempts} scan+connect attempts"
+        ) from last_error
         # CU timestamps are a free-running 32-bit millisecond counter with
         # no defined epoch; anchor it to our own monotonic clock on connect
         # so downstream code can treat TimerEvent.timestamp as seconds

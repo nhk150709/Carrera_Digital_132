@@ -7,6 +7,9 @@ app/cu/carreralib_client.py for why this warm-up exists at all.
 import asyncio
 from unittest.mock import AsyncMock, patch
 
+import pytest
+from bleak.exc import BleakDeviceNotFoundError
+
 from app.cu.carreralib_client import CarreralibCUClient, _looks_like_ble_address, _warm_ble_cache
 
 
@@ -56,6 +59,27 @@ def test_warm_ble_cache_works_from_inside_a_running_event_loop():
             _warm_ble_cache("EF:C4:35:38:1A:0B", timeout=0.01)  # must not raise
 
     asyncio.run(scenario())
+
+
+def test_connect_retries_after_bleak_device_not_found_then_succeeds():
+    client = CarreralibCUClient(device="EF:C4:35:38:1A:0B")
+    with patch("app.cu.carreralib_client._warm_ble_cache"), \
+         patch("carreralib.ControlUnit") as control_unit:
+        control_unit.side_effect = [BleakDeviceNotFoundError("EF:C4:35:38:1A:0B", "not found"),
+                                      BleakDeviceNotFoundError("EF:C4:35:38:1A:0B", "not found"),
+                                      object()]
+        client.connect(ble_connect_attempts=4)
+        assert control_unit.call_count == 3
+
+
+def test_connect_raises_clear_error_after_exhausting_all_attempts():
+    client = CarreralibCUClient(device="EF:C4:35:38:1A:0B")
+    with patch("app.cu.carreralib_client._warm_ble_cache"), \
+         patch("carreralib.ControlUnit") as control_unit:
+        control_unit.side_effect = BleakDeviceNotFoundError("EF:C4:35:38:1A:0B", "not found")
+        with pytest.raises(RuntimeError, match="after 3 scan\\+connect attempts"):
+            client.connect(ble_connect_attempts=3)
+        assert control_unit.call_count == 3
 
 
 def test_connect_works_from_inside_a_running_event_loop():
