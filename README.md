@@ -72,10 +72,27 @@ Race-strategy layer on top of that core loop:
 
 ### Run it
 
+Raspberry Pi OS (Bookworm and later) blocks system-wide `pip install`
+(PEP 668, "externally-managed-environment") to protect the OS's own
+Python tools. Use a virtual environment -- this is also just the right
+way to run it regardless of that restriction:
+
 ```bash
+cd Carrera_Digital_132
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 python -m uvicorn app.network.server:app --host 0.0.0.0 --port 8000
 ```
+
+If `python3 -m venv` itself fails with a missing-module error, install it
+first: `sudo apt install python3-venv python3-full`.
+
+Every new SSH session needs `source .venv/bin/activate` again before
+`python -m uvicorn ...` (from inside the `Carrera_Digital_132` directory)
+-- the venv doesn't stay active across logins. If you want this running
+persistently (survives reboots, no manual activation), that's a systemd
+service; ask and I'll set one up.
 
 Open `http://<pi-address>:8000/` from any device on the network. By
 default it runs against the built-in mock CU (six simulated cars) so you
