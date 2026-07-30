@@ -20,6 +20,7 @@ from starlette.requests import HTTPConnection
 
 from app.controllers.base import ControllerInput
 from app.controllers.web import WebController
+from app.cu.base import CUClient
 from app.cu.mock_client import MockCUClient
 from app.network import schemas
 from app.network.arduino_api import ArduinoBridge
@@ -38,10 +39,36 @@ STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 TICK_HZ = 20
 
 
+def build_cu_client() -> CUClient:
+    """Real hardware if CARRERA_RMS_CU_DEVICE is set (a serial device path
+    like /dev/ttyUSB0, or a BLE MAC address like aa:bb:cc:dd:ee:ff for the
+    AppConnect adapter -- carreralib picks the transport based on which
+    shape the string is). Falls back to the mock simulator otherwise, so
+    the app still runs with no hardware attached.
+
+    Set CARRERA_RMS_CU_ALLOW_CONTROLLER_WRITES=1 to try writing speed/
+    brake to addresses 0-5 (unconfirmed against real hardware -- see
+    app/cu/carreralib_client.py). Leave it unset until you've verified
+    that actually does something on your track.
+    """
+    addresses = list(range(6))
+    device = os.environ.get("CARRERA_RMS_CU_DEVICE")
+    if device:
+        from app.cu.carreralib_client import CarreralibCUClient
+
+        allow_writes = os.environ.get("CARRERA_RMS_CU_ALLOW_CONTROLLER_WRITES") == "1"
+        cu = CarreralibCUClient(device, allow_unconfirmed_controller_writes=allow_writes)
+        logger.info("Connecting to real CU at %s (controller writes %s)",
+                     device, "ALLOWED" if allow_writes else "blocked")
+    else:
+        cu = MockCUClient(addresses=addresses, base_lap_time=6.0)
+    cu.connect()
+    return cu
+
+
 def build_default_session() -> RaceSession:
     addresses = list(range(6))
-    cu = MockCUClient(addresses=addresses, base_lap_time=6.0)
-    cu.connect()
+    cu = build_cu_client()
     return RaceSession(cu, SessionConfig(addresses=addresses))
 
 

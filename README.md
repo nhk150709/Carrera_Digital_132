@@ -98,13 +98,59 @@ Open `http://<pi-address>:8000/` from any device on the network. By
 default it runs against the built-in mock CU (six simulated cars) so you
 can try the whole app immediately, with no track connected.
 
-To use real hardware instead of the mock, wire up a `CarreralibCUClient`
-(serial device path or the AppConnect adapter's BLE MAC address) in
-`app/network/server.py`'s `build_default_session()`. **Read the docstring
-in `app/cu/carreralib_client.py` first** -- writing a speed value to
-addresses 0-5 (the six controller slots) is unconfirmed against real
-hardware and is blocked by default; see
-`docs/reference/protocol-notes.md`.
+### Connecting to the real CU (serial or the AppConnect BLE adapter)
+
+Set `CARRERA_RMS_CU_DEVICE` before starting the server -- no code editing
+needed. A serial device path (`/dev/ttyUSB0`) uses a wired connection; a
+MAC-address-shaped string (`aa:bb:cc:dd:ee:ff`) uses the AppConnect BLE
+adapter instead (`carreralib` picks the transport based on which shape
+the string is).
+
+**Finding the AppConnect adapter's BLE MAC address**, from the Pi:
+
+```bash
+python3 -c "
+import asyncio
+from bleak import BleakScanner
+
+async def main():
+    for d in await BleakScanner.discover(timeout=5.0):
+        print(d.address, d.name)
+
+asyncio.run(main())
+"
+```
+
+Power-cycle the CU/AppConnect adapter right before running this so it's
+easy to spot which entry is new. Once you have the address:
+
+```bash
+CARRERA_RMS_CU_DEVICE=aa:bb:cc:dd:ee:ff python -m uvicorn app.network.server:app --host 0.0.0.0 --port 8000
+```
+
+(or `CARRERA_RMS_CU_DEVICE=/dev/ttyUSB0` for a wired connection instead.)
+
+**Before wiring this into the full app, test the raw connection on its
+own first.** The BLE connection has no built-in timeout -- if the address
+is wrong, the adapter's powered off, or it's out of range, connecting
+will hang indefinitely with no error, and that's much easier to notice
+and Ctrl+C out of in a two-line script than buried inside server startup:
+
+```bash
+python3 -c "
+import carreralib
+cu = carreralib.ControlUnit('aa:bb:cc:dd:ee:ff')
+print(cu.version())
+"
+```
+
+**Read the docstring in `app/cu/carreralib_client.py` before relying on
+controller writes.** Writing a speed/brake value to addresses 0-5 (the
+six controller slots) is unconfirmed against real hardware -- it's
+blocked by default and logged rather than silently doing nothing. Set
+`CARRERA_RMS_CU_ALLOW_CONTROLLER_WRITES=1` to try it anyway once you're
+ready to test that specifically; see `docs/reference/protocol-notes.md`
+for why it's gated.
 
 To enable the Arduino serial bridge, set `CARRERA_RMS_ARDUINO_PORT`
 (e.g. `/dev/ttyACM0`) before starting the server.

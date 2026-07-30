@@ -2,7 +2,11 @@
 
 - **Repo**: https://github.com/tkem/carreralib
 - **Docs**: https://carreralib.readthedocs.io/ · https://pythonhosted.org/carreralib/
-- **Language/platform**: Python (pySerial for cable, `bluepy`/BlueZ for BLE — Linux only for Bluetooth)
+- **Language/platform**: Python (pySerial for cable, [`bleak`](https://github.com/hbldh/bleak)
+  for BLE — cross-platform, talks to BlueZ via D-Bus on Linux, generally
+  no root/special permissions needed unlike raw-HCI-socket libraries.
+  Confirmed by reading `carreralib.ble` source directly, v1.0.3 — earlier
+  notes here said `bluepy`, that was wrong, corrected 2026-07)
 - **License**: MIT (confirmed: `pip install carreralib` and check the
   package metadata — verified 2026-07, version 1.0.3)
 - **Verified by installing it**: on 2026-07 this package was actually
@@ -54,8 +58,17 @@ implement a custom race management system."
   updates was a figure from secondary web sources, not confirmed in
   source. Treat as a reasonable default, not a verified hard limit.
 - Connection device string: a MAC-address-shaped string (`aa:bb:cc:dd:ee:ff`
-  or 5-dash-separated) selects the BLE backend (`bluepy`-based); anything
+  or 5-dash-separated) selects the BLE backend (`bleak`-based, runs the
+  connection on a background thread with its own asyncio loop); anything
   else is treated as a serial device path.
+- The BLE connection has **no built-in connect timeout** in the library
+  (`BLEConnection.__init__` calls the underlying thread's `start()` with
+  no timeout, which waits indefinitely on a "connected" event) — if the
+  MAC address is wrong, the adapter is powered off, or it's out of range,
+  connecting can hang forever with no error. Test the raw connection in a
+  small standalone script first, not inside the full app, so a hang is
+  easy to spot and interrupt (Ctrl+C) rather than silently blocking
+  server startup.
 
 ## Relevance to this project
 
