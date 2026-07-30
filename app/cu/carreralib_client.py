@@ -33,6 +33,32 @@ from app.cu.protocol import Status, TimerEvent
 CONTROLLER_ADDRESSES = set(range(6))  # 0-5: real controller slots
 
 
+def _looks_like_ble_address(device: str) -> bool:
+    """Matches carreralib.connection.open()'s own check for which
+    transport a device string selects."""
+    return len(device.split(":")) == 6 or len(device.split("-")) == 5
+
+
+def _warm_ble_cache(address: str, timeout: float = 4.0) -> None:
+    """On Linux, bleak's BlueZ backend can only connect to a device BlueZ
+    has *recently* seen via a scan -- it resolves the address against
+    BlueZ's own D-Bus device cache rather than scanning itself, so a
+    direct connect some time after the last scan fails with
+    BleakDeviceNotFoundError even though the device is right there and
+    working (observed in practice: works immediately after a manual scan,
+    fails a minute later). A short scan immediately before connecting
+    keeps that cache fresh and avoids the failure.
+    """
+    import asyncio
+
+    from bleak import BleakScanner
+
+    async def scan() -> None:
+        await BleakScanner.discover(timeout=timeout)
+
+    asyncio.run(scan())
+
+
 class CarreralibCUClient(CUClient):
     def __init__(self, device: str, allow_unconfirmed_controller_writes: bool = False):
         self.device = device
@@ -42,6 +68,9 @@ class CarreralibCUClient(CUClient):
 
     def connect(self) -> None:
         import carreralib  # lazy import: not a hard dependency for mock-mode use
+
+        if _looks_like_ble_address(self.device):
+            _warm_ble_cache(self.device)
 
         self._cu = carreralib.ControlUnit(self.device)
         # CU timestamps are a free-running 32-bit millisecond counter with
