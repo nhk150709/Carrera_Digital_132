@@ -90,9 +90,10 @@ first: `sudo apt install python3-venv python3-full`.
 
 Every new SSH session needs `source .venv/bin/activate` again before
 `python -m uvicorn ...` (from inside the `Carrera_Digital_132` directory)
--- the venv doesn't stay active across logins. If you want this running
-persistently (survives reboots, no manual activation), that's a systemd
-service; ask and I'll set one up.
+-- the venv doesn't stay active across logins. To avoid all of that and
+have it just run persistently in the background (starts on boot, no
+manual activation, restarts itself if it crashes), see
+[`deploy/README.md`](deploy/README.md) for a systemd service.
 
 Open `http://<pi-address>:8000/` from any device on the network. By
 default it runs against the built-in mock CU (six simulated cars) so you
