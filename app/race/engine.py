@@ -68,7 +68,17 @@ class RaceEngine:
         self.state = RaceState.RUNNING
         self.go_timestamp = now
         for car in self.cars.values():
-            car.last_crossing_timestamp = now
+            # Deliberately not seeded with `now`: `now` is this app's own
+            # clock, but a real CU's Timer timestamps come back in a
+            # completely different, CU-internal clock domain (see
+            # app/cu/carreralib_client.py's _to_seconds()) that has no
+            # fixed relationship to when go() was called. Subtracting one
+            # domain from the other produces nonsense lap times (observed
+            # in practice: huge negative numbers). Leaving this None makes
+            # the first crossing after go() an unrecorded baseline instead
+            # -- standard lap-timer behavior, and safe regardless of which
+            # CU backend's clock domain is in play.
+            car.last_crossing_timestamp = None
         self._emit(f"race started at t={now:.2f}")
 
     def report_early_movement(self, address: int, now: float) -> None:
@@ -102,10 +112,12 @@ class RaceEngine:
         if self.state != RaceState.PAUSED:
             return
         self.state = RaceState.RUNNING
-        # Re-baseline crossing timestamps so the paused duration isn't
-        # counted as part of anyone's next lap time.
+        # Same reasoning as go(): can't seed with `now` (this app's clock)
+        # since it doesn't share a domain with the CU's own Timer
+        # timestamps. The next crossing after resume() becomes a fresh
+        # unrecorded baseline instead, same as after go().
         for car in self.cars.values():
-            car.last_crossing_timestamp = now
+            car.last_crossing_timestamp = None
         self._emit(f"race resumed at t={now:.2f}")
 
     def finish(self, now: float) -> None:
@@ -122,22 +134,24 @@ class RaceEngine:
     def handle_timer_event(self, address: int, timestamp: float, sector: int = 0) -> LapRecord | None:
         """Feed in a Timer message (address, timestamp, sector) from the CU
         (or the mock CU). sector == 0 is treated as a start/finish crossing
-        (a full lap); nonzero sectors are recorded but don't complete a lap.
+        (a full lap); nonzero sectors are recorded but don't complete a lap
+        and never establish the baseline either (only a real start/finish
+        crossing should anchor lap timing, not a mid-lap Check Lane split
+        that happens to arrive first).
 
-        `go()` seeds every car's crossing baseline at the green light, so
-        the first sector-0 crossing after go() is lap 1, timed from the
-        start -- there's no separate "baseline" event to send.
+        The first sector-0 crossing after go()/resume() is an unrecorded
+        baseline (car.last_crossing_timestamp starts at None then); the
+        *next* sector-0 crossing is lap 1, timed from that baseline.
         """
         car = self.cars.get(address)
         if car is None or self.state != RaceState.RUNNING:
             return None
-        if car.last_crossing_timestamp is None:
-            # Defensive fallback: shouldn't happen since go() seeds this,
-            # but avoids a bogus huge lap time if it's ever missed.
-            car.last_crossing_timestamp = timestamp
-            return None
         if sector != 0:
-            # Sector split (e.g. a Check Lane) -- not a lap completion.
+            # Sector split (e.g. a Check Lane) -- not a lap completion,
+            # and must not consume/set the baseline.
+            return None
+        if car.last_crossing_timestamp is None:
+            car.last_crossing_timestamp = timestamp
             return None
 
         lap_time = timestamp - car.last_crossing_timestamp

@@ -33,10 +33,50 @@ from app.cu.protocol import Status, TimerEvent
 CONTROLLER_ADDRESSES = set(range(6))  # 0-5: real controller slots
 
 
+AUTO_DISCOVER_SENTINEL = "auto"
+DEFAULT_CU_BLE_NAME = "Control_Unit"  # confirmed advertised name of the AppConnect adapter
+
+
 def _looks_like_ble_address(device: str) -> bool:
     """Matches carreralib.connection.open()'s own check for which
     transport a device string selects."""
     return len(device.split(":")) == 6 or len(device.split("-")) == 5
+
+
+def discover_cu_address(name: str = DEFAULT_CU_BLE_NAME, timeout: float = 6.0) -> str:
+    """Scans for a BLE device advertising the given name (the CU/AppConnect
+    adapter's own name, confirmed "Control_Unit" in practice) and returns
+    its address -- so you don't have to re-scan by hand and hardcode a MAC
+    every time. Works the same way regardless of whether the caller
+    already has an event loop running (see _warm_ble_cache's docstring for
+    why that matters). Raises RuntimeError if no matching device is found.
+    """
+    import asyncio
+    import threading
+
+    from bleak import BleakScanner
+
+    found: dict[str, str] = {}
+
+    async def scan() -> None:
+        for d in await BleakScanner.discover(timeout=timeout):
+            if d.name == name:
+                found["address"] = d.address
+                return
+
+    def run_in_new_loop() -> None:
+        asyncio.run(scan())
+
+    thread = threading.Thread(target=run_in_new_loop)
+    thread.start()
+    thread.join()
+
+    if "address" not in found:
+        raise RuntimeError(
+            f"no BLE device advertising name {name!r} found in a {timeout}s scan "
+            "-- make sure it's powered on and not already connected to something else"
+        )
+    return found["address"]
 
 
 def _warm_ble_cache(address: str, timeout: float = 4.0) -> None:
@@ -79,9 +119,13 @@ class CarreralibCUClient(CUClient):
         self.allow_unconfirmed_controller_writes = allow_unconfirmed_controller_writes
         self._cu = None
         self._clock_offset_ms: float | None = None
+        self._latest_status: Status | None = None
 
     def connect(self, ble_connect_attempts: int = 4) -> None:
         import carreralib  # lazy import: not a hard dependency for mock-mode use
+
+        if self.device == AUTO_DISCOVER_SENTINEL:
+            self.device = discover_cu_address()
 
         if not _looks_like_ble_address(self.device):
             self._cu = carreralib.ControlUnit(self.device)
@@ -108,16 +152,12 @@ class CarreralibCUClient(CUClient):
             f"could not connect to BLE device {self.device} after "
             f"{ble_connect_attempts} scan+connect attempts"
         ) from last_error
-        # CU timestamps are a free-running 32-bit millisecond counter with
-        # no defined epoch; anchor it to our own monotonic clock on connect
-        # so downstream code can treat TimerEvent.timestamp as seconds
-        # comparable across the session.
-        self._clock_offset_ms = None
 
     def disconnect(self) -> None:
         if self._cu is not None:
             self._cu.close()
         self._cu = None
+        self._latest_status = None
 
     def _to_seconds(self, cu_timestamp_ms: int) -> float:
         if self._clock_offset_ms is None:
@@ -127,18 +167,25 @@ class CarreralibCUClient(CUClient):
         return (cu_timestamp_ms - self._clock_offset_ms) / 1000.0
 
     def read_status(self) -> Status:
-        assert self._cu is not None, "not connected"
-        result = self._cu.poll()
-        # poll() can return a pending Timer instead of Status; callers
-        # should prefer draining poll_timer() in the same loop iteration
-        # and only trust read_status() shortly after, or call this in a
-        # retry loop. Kept simple here: try a few times.
-        for _ in range(8):
-            if hasattr(result, "fuel"):
-                return Status(fuel=tuple(result.fuel), pit=tuple(result.pit),
-                               start=result.start, mode=result.mode, display=result.display)
-            result = self._cu.poll()
-        raise RuntimeError("CU did not return a Status message")
+        """Returns the most recently observed Status -- does NOT poll the
+        CU itself. carreralib's poll() returns either a pending Timer or a
+        Status on each call, never both, and the CU only has one request/
+        response channel -- calling poll() separately here as well as in
+        poll_timer() would double the round-trips per tick and let the two
+        calls race each other. Instead, poll_timer() (the one call per
+        tick the session loop already makes) opportunistically caches
+        whatever Status it happens to see interleaved with Timer messages,
+        and this just returns that cache. Note this means Status can lag
+        during a stretch of heavy lap-crossing traffic, when the CU may
+        keep returning pending Timer messages ahead of a fresh Status --
+        fine for a debug/monitoring view, not guaranteed fresh every tick.
+
+        Raises RuntimeError if no Status has been observed yet (e.g.
+        called immediately after connect(), before the first tick).
+        """
+        if self._latest_status is None:
+            raise RuntimeError("no Status message received from the CU yet -- call poll_timer() first")
+        return self._latest_status
 
     def poll_timer(self) -> list[TimerEvent]:
         assert self._cu is not None, "not connected"
@@ -149,6 +196,9 @@ class CarreralibCUClient(CUClient):
             events.append(TimerEvent(address=result.address,
                                        timestamp=self._to_seconds(result.timestamp),
                                        sector=sector))
+        elif result is not None and hasattr(result, "fuel"):
+            self._latest_status = Status(fuel=tuple(result.fuel), pit=tuple(result.pit),
+                                           start=result.start, mode=result.mode, display=result.display)
         return events
 
     def set_speed(self, address: int, value: int) -> None:

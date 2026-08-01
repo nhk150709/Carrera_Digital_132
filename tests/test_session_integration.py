@@ -74,6 +74,19 @@ def test_stop_button_pauses_race_and_can_penalize_trigger():
     assert session.engine.state == RaceState.PAUSED
 
 
+def test_stop_and_resume_also_command_the_cu_not_just_local_state():
+    session, cu = make_session(addresses=(0,))
+    session.begin_countdown()
+    session.go()
+    starts_after_go = cu.start_call_count
+
+    session.stop()
+    assert cu.start_call_count == starts_after_go + 1
+
+    session.resume()
+    assert cu.start_call_count == starts_after_go + 2
+
+
 def test_early_movement_during_countdown_flags_jump_start():
     session, cu = make_session(addresses=(0,))
     clock: _FakeClock = session.clock

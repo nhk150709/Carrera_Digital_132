@@ -125,9 +125,26 @@ class RaceSession:
 
     def stop(self, triggered_by: int | None = None, penalize_trigger: bool = False) -> None:
         self.engine.stop(self.clock(), triggered_by=triggered_by, penalize_trigger=penalize_trigger)
+        # Best-effort: also tell the physical CU to stop, not just our own
+        # bookkeeping. carreralib's start() presses the CU's own
+        # START/ENTER button, which is documented to start/pause a race --
+        # calling it again here assumes that's a toggle (press = pause
+        # when already running). That toggle behavior is inferred from
+        # how the button is used elsewhere, not independently confirmed
+        # against real hardware; if it turns out not to toggle, this call
+        # is harmless (mock CU: no-op state; real CU: presses a button
+        # that may just re-affirm "running").
+        try:
+            self.cu.start()
+        except UnsupportedCommand as exc:
+            self._log(f"CU stop command rejected: {exc}")
 
     def resume(self) -> None:
         self.engine.resume(self.clock())
+        try:
+            self.cu.start()
+        except UnsupportedCommand as exc:
+            self._log(f"CU resume command rejected: {exc}")
 
     def start_pace_car(self, playback: PaceCarPlayback) -> None:
         self.pace_playback = playback
@@ -259,6 +276,23 @@ class RaceSession:
             self.cu.set_speed(address, value)
         except UnsupportedCommand as exc:
             self._log(f"pace car set_speed rejected: {exc}")
+
+    def raw_cu_status(self) -> dict | None:
+        """Best-effort snapshot of the CU's own raw Status (fuel[], pit[],
+        start, mode, display) for the debug tab -- returns None if the
+        backend hasn't seen one yet (e.g. MockCUClient always has one
+        immediately; CarreralibCUClient only after its first poll)."""
+        try:
+            status = self.cu.read_status()
+        except Exception:
+            return None
+        return {
+            "fuel": list(status.fuel),
+            "pit": list(status.pit),
+            "start": status.start,
+            "mode": status.mode,
+            "display": status.display,
+        }
 
     def ghost_delta(self, address: int) -> float | None:
         ghost = self.ghosts.get(address)

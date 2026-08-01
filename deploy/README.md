@@ -24,18 +24,22 @@ sudo systemctl status carrera-rms
 
 ## Configuring real hardware
 
-Create `~/Carrera_Digital_132/.env` (not committed to git) with whichever
-of these you need:
+Copy the template and edit it (not committed to git):
 
-```
-CARRERA_RMS_CU_DEVICE=EF:C4:35:38:1A:0B
-CARRERA_RMS_CU_ALLOW_CONTROLLER_WRITES=1
-CARRERA_RMS_ARDUINO_PORT=/dev/ttyACM0
+```bash
+cp ~/Carrera_Digital_132/.env.example ~/Carrera_Digital_132/.env
 ```
 
-then `sudo systemctl restart carrera-rms` to pick it up. Until you add
-`CARRERA_RMS_CU_DEVICE`, the service runs against the mock CU -- fine to
-set up the service now and add real hardware later.
+`CARRERA_RMS_CU_DEVICE=auto` (scans for a device named `Control_Unit` on
+every start) is usually the least fuss -- avoids hardcoding a MAC that
+might not even be stable across power cycles. Then:
+
+```bash
+sudo systemctl restart carrera-rms
+```
+
+Until you set `CARRERA_RMS_CU_DEVICE`, the service runs against the mock
+CU -- fine to set up the service now and add real hardware later.
 
 ## Logs
 

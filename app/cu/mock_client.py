@@ -31,6 +31,7 @@ class MockCUClient(CUClient):
         self._next_crossing: dict[int, float] = {}
         self._now = 0.0
         self._connected = False
+        self.start_call_count = 0  # lets tests confirm the CU's start/pause is actually commanded
 
     def connect(self) -> None:
         self._connected = True
@@ -85,4 +86,5 @@ class MockCUClient(CUClient):
         self._fuel_override[address] = max(0, min(15, value))
 
     def start(self) -> None:
+        self.start_call_count += 1
         self.arm(self.clock())

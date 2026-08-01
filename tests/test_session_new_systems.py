@@ -203,6 +203,24 @@ def test_forecast_changes_weather_based_on_leader_lap_not_wall_clock():
     assert any(e["type"] == "weather_change" for e in seen_events)
 
 
+def test_raw_cu_status_available_from_mock_immediately():
+    session, cu, clock = make_session(addresses=(0, 1))
+    status = session.raw_cu_status()
+    assert status is not None
+    assert len(status["fuel"]) == 2
+    assert len(status["pit"]) == 2
+
+
+def test_raw_cu_status_none_when_backend_raises():
+    class BrokenStatusCU:
+        def read_status(self):
+            raise RuntimeError("not connected yet")
+
+    session, cu, clock = make_session(addresses=(0,))
+    session.cu = BrokenStatusCU()
+    assert session.raw_cu_status() is None
+
+
 def test_ghost_delta_available_after_lap_and_ghost_set(tmp_path):
     session, cu, clock = make_session(addresses=(0,))
     session.recorder.storage_dir = tmp_path
@@ -214,6 +232,7 @@ def test_ghost_delta_available_after_lap_and_ghost_set(tmp_path):
 
     session.set_ghost(0, "ghost1")
     session.engine.go(0.0)
+    session.engine.handle_timer_event(0, timestamp=0.0, sector=0)  # baseline
     session.engine.handle_timer_event(0, timestamp=6.0, sector=0)  # lap 1 in 6s, ghost did it in 5s
     delta = session.ghost_delta(0)
     assert delta == 1.0

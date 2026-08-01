@@ -53,6 +53,19 @@ pages on this point):
   Lane splits. `app/race/engine.py` uses its own sector==0-means-lap
   convention internally for simplicity/testability; the CU adapter
   translates 1→0 at the boundary.
+- **Clock-domain rule, learned from a real bug on real hardware**: never
+  seed `RaceEngine`'s per-car `last_crossing_timestamp` with this app's
+  own clock (`session.clock()`/`time.monotonic()`). A real CU's `Timer`
+  timestamps come back through `CarreralibCUClient._to_seconds()`, an
+  entirely different, CU-internal domain with no fixed relationship to
+  when `go()`/`resume()` was called — mixing the two domains produced
+  wildly wrong (huge negative) lap times against real hardware, even
+  though it looked fine against the mock (whose clock *is* the session's
+  clock, masking the bug). `go()`/`resume()` now leave
+  `last_crossing_timestamp` as `None`; the next sector-0 crossing
+  becomes an unrecorded baseline, and only crossings *within the same
+  reported domain* are ever subtracted from each other. Keep this
+  invariant if touching engine.py — don't reintroduce clock mixing.
 - The CU's `start` status field is a **0-9 state code** for its own
   built-in start-light sequence — useful context, though this app drives
   its own independent 5-light Arduino sequence

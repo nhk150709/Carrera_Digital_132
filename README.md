@@ -99,15 +99,44 @@ Open `http://<pi-address>:8000/` from any device on the network. By
 default it runs against the built-in mock CU (six simulated cars) so you
 can try the whole app immediately, with no track connected.
 
+### Easiest way to run it (recommended for regular use/debugging)
+
+```bash
+cp .env.example .env   # then edit CARRERA_RMS_CU_DEVICE etc. inside it
+./run.sh
+```
+
+`run.sh` activates the venv, loads `.env` if present (the same file the
+systemd service in `deploy/` reads), and starts the server -- one command
+instead of remembering the activate/env-var/uvicorn sequence each time.
+Add `CARRERA_RMS_CU_DEVICE=auto` to `.env` (see below) and you never have
+to look up or paste in a MAC address again either.
+
 ### Connecting to the real CU (serial or the AppConnect BLE adapter)
 
 Set `CARRERA_RMS_CU_DEVICE` before starting the server -- no code editing
 needed. A serial device path (`/dev/ttyUSB0`) uses a wired connection; a
 MAC-address-shaped string (`aa:bb:cc:dd:ee:ff`) uses the AppConnect BLE
 adapter instead (`carreralib` picks the transport based on which shape
-the string is).
+the string is); the special value **`auto`** scans for a BLE device
+advertising the name `Control_Unit` (confirmed name of the AppConnect
+adapter) and uses whatever address it finds -- no need to hardcode or
+re-discover a MAC by hand:
 
-**Finding the AppConnect adapter's BLE MAC address**, from the Pi:
+```bash
+CARRERA_RMS_CU_DEVICE=auto ./run.sh
+```
+
+This re-scans on every startup (a few seconds added to boot time) rather
+than reusing a saved address, which sidesteps a real gotcha: BLE
+addresses aren't guaranteed stable across power cycles or across
+different machines (and on macOS they're not real MAC addresses at all --
+see the note further down), so "auto" is more robust long-term than a
+hardcoded value even though it's slightly slower to start.
+
+**Finding the AppConnect adapter's BLE MAC address by hand** (only needed
+if you want to skip the auto-scan and pin a specific address), from the
+Pi:
 
 ```bash
 python3 -c "

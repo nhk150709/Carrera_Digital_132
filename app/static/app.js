@@ -134,6 +134,9 @@ function render(state) {
   renderStartLights($("personal-start-lights"), state.start_phase);
   renderStopBanner(state);
   renderSafetyCarBanner(state);
+  $("cu-status-raw").textContent = state.cu_status
+    ? JSON.stringify(state.cu_status, null, 2)
+    : "not connected / no Status seen yet";
   renderForecast(state);
 
   const rankBody = $("ranking-body");
@@ -173,6 +176,7 @@ function render(state) {
       <h3>${car.name || "Car " + addr} <span class="addr">#${addr} ${car.compound}</span></h3>
       <div>Controller: ${car.controller_id || "-"} ${car.jump_start ? '<span class="jump">JUMP START</span>' : ""}</div>
       <div>Lap ${car.lap_count} - Best ${fmt(car.best_lap)}s - Penalty ${car.penalty_seconds}s</div>
+      ${car.controller_id ? `
       <div>Fuel ${Math.round(car.fuel)}%</div>
       <div class="bar fuel"><div style="width:${car.fuel}%"></div></div>
       <div>Tyre wear ${Math.round(car.tyre_wear)}%</div>
@@ -181,6 +185,11 @@ function render(state) {
       <div class="bar fuel"><div style="width:${car.throttle * 100}%; background:#2ea043"></div></div>
       <div>Brake ${Math.round(car.brake * 100)}%</div>
       <div class="bar fuel"><div style="width:${car.brake * 100}%; background:#da3633"></div></div>
+      ` : `
+      <div style="color:var(--muted); font-size:0.8rem">No controller assigned -- fuel/tyre/throttle
+      simulation only runs for cars driven through this app (assign one below).
+      Lap timing still works regardless, from the CU's own sensors.</div>
+      `}
       <div>${car.in_pit ? "IN PIT" : ""} ${car.recording ? "REC" : ""} ${car.broken_down ? "BROKEN DOWN" : ""}</div>
     `;
     grid.appendChild(card);
@@ -341,6 +350,7 @@ async function refreshStrategyGraph() {
 
 function setupControls() {
   $("go-btn").onclick = () => post("/api/race/countdown");
+  $("go-instant-btn").onclick = () => post("/api/race/go");
   $("stop-btn").onclick = () => post("/api/race/stop", { triggered_by: null });
   $("resume-btn").onclick = () => post("/api/race/resume");
   $("reset-btn").onclick = () => post("/api/race/reset");

@@ -7,6 +7,8 @@ from app.race.models import RaceMode
 def test_qualifying_ranks_by_best_lap_like_time_attack():
     engine = RaceEngine(addresses=[0, 1], mode=RaceMode.QUALIFYING)
     engine.go(now=0.0)
+    engine.handle_timer_event(0, timestamp=0.0, sector=0)  # baseline
+    engine.handle_timer_event(1, timestamp=0.0, sector=0)  # baseline
     engine.handle_timer_event(0, timestamp=10.0, sector=0)
     engine.handle_timer_event(1, timestamp=9.0, sector=0)
     ranking = engine.rankings()
@@ -16,6 +18,8 @@ def test_qualifying_ranks_by_best_lap_like_time_attack():
 def test_grid_order_fastest_first():
     engine = RaceEngine(addresses=[0, 1, 2], mode=RaceMode.QUALIFYING)
     engine.go(now=0.0)
+    engine.handle_timer_event(0, timestamp=0.0, sector=0)  # baseline
+    engine.handle_timer_event(1, timestamp=0.0, sector=0)  # baseline
     engine.handle_timer_event(0, timestamp=12.0, sector=0)
     engine.handle_timer_event(1, timestamp=9.0, sector=0)
     # car 2 never sets a lap time

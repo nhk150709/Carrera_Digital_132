@@ -62,5 +62,6 @@ def serialize(session: RaceSession) -> dict:
             "speed_scale": session.pace_playback.speed_scale if session.pace_playback else None,
         },
         "events": list(session.events),
+        "cu_status": session.raw_cu_status(),
         "debug_log": session.debug_log[-50:],
     }

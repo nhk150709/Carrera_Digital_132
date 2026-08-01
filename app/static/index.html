@@ -40,6 +40,7 @@
 
 <div class="controls">
   <button class="btn-go" id="go-btn">GREEN &#9654; GO</button>
+  <button id="go-instant-btn" title="Skip the 5-light sequence, go straight to RUNNING -- for debugging">Quick Start (skip lights)</button>
   <button class="btn-stop" id="stop-btn">STOP</button>
   <button id="resume-btn">Resume</button>
   <button id="reset-btn">Reset</button>
@@ -133,6 +134,13 @@
     <section id="debug-panel">
       <h2>Debug log</h2>
       <div id="debug-log"></div>
+      <h2>CU status (raw)</h2>
+      <p style="color:var(--muted); font-size:0.8rem">
+        What the Control Unit itself is reporting right now -- fuel[]/pit[]
+        are 0-15 (CU's own scale, not this app's 0-100%), useful for
+        confirming real hardware data is actually flowing in.
+      </p>
+      <pre id="cu-status-raw" style="font-family:ui-monospace,monospace; font-size:0.8rem; color:var(--muted); white-space:pre-wrap;">not connected / no Status seen yet</pre>
     </section>
 
     <section id="personal-screen">
