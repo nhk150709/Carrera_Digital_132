@@ -1,14 +1,13 @@
 [Unit]
-Description=Carrera Digital Race Management Server
+Description=Carrera Digital CU Monitor
 After=network.target bluetooth.target
 
 [Service]
 Type=simple
 User=nhk150709
 WorkingDirectory=/home/nhk150709/Carrera_Digital_132
-# Optional: create /home/nhk150709/Carrera_Digital_132/.env with lines like
+# Optional: create /home/nhk150709/Carrera_Digital_132/.env with a line like
 #   CARRERA_RMS_CU_DEVICE=EF:C4:35:38:1A:0B
-#   CARRERA_RMS_ARDUINO_PORT=/dev/ttyACM0
 # The leading "-" means systemd won't fail to start if the file doesn't
 # exist yet -- the mock CU is used until you add CARRERA_RMS_CU_DEVICE.
 EnvironmentFile=-/home/nhk150709/Carrera_Digital_132/.env

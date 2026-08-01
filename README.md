@@ -1,91 +1,45 @@
 # Carrera Digital 132 — Controller Communication Project
 
-Custom race-management app + Arduino/microcontroller devices for a Carrera
+Custom Arduino/microcontroller devices + a Python tool for a Carrera
 Digital 132/124 slot-car track, built on the Control Unit's own PC-port
 serial/BLE protocol. See [`CLAUDE.md`](CLAUDE.md) for the full project
 brief and [`docs/reference/`](docs/reference/README.md) for the protocol
 research this is built on.
 
-## The app (`app/`)
+## The app (`app/`) — a read-only CU monitor
 
-A Python race-management server -- runs on a Raspberry Pi or any other
-machine with Python -- that:
+**This app currently does one thing: connect to the Control Unit and show
+everything it reports, live, with nothing else attached.** No race
+management, no lap timing/ranking, no controller-to-car assignment, no
+fuel/tyre simulation -- that layer existed in an earlier version of this
+app and was deliberately stripped out (its design is fully preserved in
+[`CLAUDE.md`](CLAUDE.md)'s "Race manager" section for reintegration
+later; the code itself is recoverable from git history). What's here now:
 
-- talks to the CU over serial or BLE (via `carreralib`) for real hardware,
-  or a built-in simulator (`MockCUClient`) so the whole thing is usable
-  and testable with no hardware at all -- which backend is actually active
-  is always shown as a banner under the header (and in the debug tab), so
-  it's never ambiguous whether you're looking at simulated or real data;
-- GO presses the CU's own physical START/ENTER button (native light
-  sequence, not an app-driven one) and starts lap timing once the CU's own
-  `start` status field signals the sequence finished, so timing is
-  synchronized with the real lights rather than a separately-guessed
-  delay (heuristic -- see `app/network/server.py::_run_cu_synced_start`);
-  "Quick Start" skips this and goes straight to running, for debugging
-  without hardware;
-- serves a browser-based dashboard (lap time, position, delta, penalties,
-  fuel, big start/stop buttons, car/controller assignment, weather and
-  debug panels) over one local web server -- every browser on the network,
-  including the Pi's own screen, is just another client of the same race
-  state, which is also what makes "others can access their own screen"
-  work;
-- accepts input from local gamepads (pygame) or from any browser
-  (keyboard/touch), each tagged with its own controller ID, with a
-  per-player throttle/brake sensitivity curve;
-- runs Race mode (laps + ranking + time penalties) and Time Attack mode
-  (fastest lap ranking);
-- records a player's input over time and can replay it as a variable-
-  speed "ghost" pace car;
-- simulates fuel drain from tyre wear + acceleration (independent of the
-  CU's own lap-time-based fuel simulation) and can push the result back
-  to the CU's own fuel display;
-- exposes a compact serial protocol for Arduino peripherals (fuel/pit
-  panel, start lights, rank display, stop buttons, early-movement/jump-
-  start sensor) -- see `app/network/arduino_api.py` and `arduino/` for
-  example sketches.
+- talks to the CU over serial or BLE (via `carreralib`) for real
+  hardware, or a built-in simulator (`MockCUClient`) so it's usable with
+  no track connected;
+- a big, impossible-to-miss connection badge: **MOCK** (yellow, no real
+  hardware), **CONNECTED** (green), or **DISCONNECTED** (red) -- plus the
+  exact backend identity (which device/address) and a running connect-
+  attempt counter, so it's never ambiguous whether you're looking at
+  simulated or real data, or whether the connection actually dropped;
+- decodes and shows every `Status` field live: `fuel[8]` (0-15 raw and
+  as %), `pit[8]`, `start` (0-9 raw), `mode` (bitmask, decoded into
+  `FUEL_MODE`/`REAL_MODE`/`PIT_LANE_MODE`/`LAP_COUNTER_MODE`), `display`;
+- a scrolling log of every `Timer` event (lap/sector crossing) as it
+  arrives -- address, sector (translated to "start/finish" or "check
+  lane N"), wall-clock time, and the CU's own raw timestamp;
+- a scrolling **raw wire-level log**: carreralib's own DEBUG-level
+  logging of literal send/receive bytes over serial, or raw BLE
+  notification payloads, captured instead of only printed -- the actual
+  data stream, not a paraphrase (empty against the mock backend, since
+  nothing goes over a wire there);
+- one manual "Reconnect" button/endpoint (`POST /api/reconnect`); the
+  poll loop also retries on its own every 5s if the connection drops.
 
-Race-strategy layer on top of that core loop:
-
-- **fuel/tyres**: a pre-race fuel *load* choice costs top speed while the
-  tank is fuller, burning off as it's used. Fuel refuels during a pit
-  stop (gradually, not instantly), and tyres are only actually changed
-  once that refuel completes -- leave before it's full and you keep worn
-  tyres, a real "splash and go" trade-off. Tyre wear visibly cuts top
-  speed and braking as it climbs, not just fuel drain rate. Three
-  compounds (soft/medium/hard) trade grip for wear rate. **Honesty note**:
-  this whole simulation (fuel drain, tyre wear, refuel) only reflects
-  reality for cars actually driven *through this app* -- a physical hand
-  controller's throttle/brake is unreadable over the CU protocol
-  (confirmed), so none of it runs for a car driven that way. The one
-  fuel number that's real regardless is the CU's own `fuel[]` reading,
-  shown separately on each car card and in the debug tab.
-- **weather**: a track-wide grip cap (existing "weather mode") plus a
-  separate per-car tyre/weather match bonus or penalty, and a lap-count-
-  based forecast (`app/race/forecast.py`) -- scheduled against the race
-  *leader's lap number*, not wall-clock time, with a calibrated confidence
-  players have to gamble on (a "70% chance of rain by lap 20" forecast
-  really is right ~70% of the time, not just flavor text).
-- **strategy planning**: a pre-race plan per car (fuel load, compound,
-  planned pit laps) with a lap-by-lap fuel/tyre projection graph (planned
-  vs actual) in the UI, plus a "recommended" balanced default for
-  newcomers, derived from the same simulation constants the race actually
-  runs on (`app/race/strategy.py`).
-- **push-to-pass**: a ~5s throttle boost triggerable from the player's own
-  screen, at a heavy fuel/tyre cost and a cooldown (`app/race/overtake.py`).
-- **safety car**: a virtual field-wide speed cap (works with zero extra
-  hardware), or a real physical pace-car command if one is actually
-  sitting on the track (`app/race/safety_car.py`) -- see the honesty note
-  below on what triggering it actually does.
-- **reliability**: a low-probability random breakdown forcing a car to a
-  dead stop until it's serviced in the pit (`app/race/reliability.py`).
-- **qualifying**: an optional mode ranked by best lap, producing a grid
-  order for display -- entirely skippable, Race/Time Attack don't require
-  it.
-- **ghost delta**: live gap to a recorded lap, updated at each lap
-  boundary (see the honesty note below on why it's not continuous).
-- **sound/voice**: browser-native text-to-speech (Web Speech API -- free,
-  offline, no API keys) plus optional user-supplied short clips for pit/
-  repair/breakdown/final-lap/race-win events (`app/static/sound.js`).
+That's the entire feature set. No endpoint writes anything to the CU
+(no speed/brake/fuel/start commands) -- this is deliberately read-only.
 
 ### Run it
 
@@ -113,13 +67,15 @@ manual activation, restarts itself if it crashes), see
 [`deploy/README.md`](deploy/README.md) for a systemd service.
 
 Open `http://<pi-address>:8000/` from any device on the network. By
-default it runs against the built-in mock CU (six simulated cars) so you
-can try the whole app immediately, with no track connected.
+default it runs against the built-in mock CU (fuel/pit for 6 simulated
+addresses, no Timer events since nothing ever presses the mock's own
+start) so the page itself is checkable with no track connected -- the
+badge will clearly say **MOCK** the whole time.
 
 ### Easiest way to run it (recommended for regular use/debugging)
 
 ```bash
-cp .env.example .env   # then edit CARRERA_RMS_CU_DEVICE etc. inside it
+cp .env.example .env   # then edit CARRERA_RMS_CU_DEVICE inside it
 ./run.sh
 ```
 
@@ -191,17 +147,6 @@ print(cu.version())
 "
 ```
 
-**Read the docstring in `app/cu/carreralib_client.py` before relying on
-controller writes.** Writing a speed/brake value to addresses 0-5 (the
-six controller slots) is unconfirmed against real hardware -- it's
-blocked by default and logged rather than silently doing nothing. Set
-`CARRERA_RMS_CU_ALLOW_CONTROLLER_WRITES=1` to try it anyway once you're
-ready to test that specifically; see `docs/reference/protocol-notes.md`
-for why it's gated.
-
-To enable the Arduino serial bridge, set `CARRERA_RMS_ARDUINO_PORT`
-(e.g. `/dev/ttyACM0`) before starting the server.
-
 ### Run the tests
 
 ```bash
@@ -209,11 +154,12 @@ pip install -r requirements.txt
 pytest
 ```
 
-All of `app/race/*`, `app/controllers/*`, `app/cu/mock_client.py`, and the
-Arduino protocol formatting are unit/integration tested without any
+`app/cu/mock_client.py`, `app/cu/protocol.py`, and the monitor server's
+own logic (`MonitorState`, mode-bitmask decoding, the raw log handler,
+its REST/WebSocket endpoints) are unit/integration tested without any
 hardware. `app/cu/carreralib_client.py`'s actual hardware I/O is
 untestable in this environment by definition -- only its address-write
-guard logic is covered.
+guard logic and connection-retry logic are covered.
 
 ## Open hardware questions (test before relying on them)
 
@@ -223,27 +169,25 @@ guard logic is covered.
   whether the CU firmware actually honors an external override for a slot
   with a live physical/wireless controller attached -- versus the real
   controller's own input winning, or the two fighting each other -- is
-  unconfirmed. Confirmed-safe targets for software speed control are the
-  autonomous car (6) and pace car (7) addresses. `carreralib` also exposes
-  an `ignore(mask)` command (an 8-bit bitmask telling the CU to ignore
-  certain controllers' own input entirely) that, per its docstring, may be
-  the actual mechanism for cleanly handing an address to app control
-  without a fight -- not yet used by this app, and not independently
-  confirmed either; worth testing alongside the write-guard override.
-- **Jump-start / early-movement detection**: the CU's own Status/Timer
-  messages don't expose a live per-car throttle field, so this app can
-  only detect it from (a) a locally-attached controller's own raw input,
-  or (b) a dedicated Arduino start-line sensor sending `EARLY <addr>` --
-  not from CU telemetry alone.
-- **Safety car placement**: triggering the safety car only ever *commands*
-  speed to whatever's already sitting at the pace-car address (7) -- the
-  CU cannot place a car onto the track by itself. If `physically_present`
-  is False (the default), triggering it only applies the field-wide
-  virtual caution; a physical pace car has to be put on the track by hand
-  beforehand for the "real car slows down" part to mean anything.
-- **Ghost delta is lap-boundary, not continuous**: the CU only reports
-  discrete lap/sector crossings, not continuous position, so the ghost
-  comparison updates once per lap (or per Check Lane sector, if
-  configured) -- not smoothly like a telemetry-based delta bar in a sim.
-  True continuous tracking would need either Check Lane hardware or a
-  separate continuous position source (e.g. a camera-based system).
+  unconfirmed. `carreralib` also exposes an `ignore(mask)` command (an
+  8-bit bitmask telling the CU to ignore certain controllers' own input
+  entirely) that, per its docstring, may be the actual mechanism for
+  cleanly handing an address to external control without a fight -- not
+  independently confirmed either. This monitor doesn't write anything to
+  the CU at all, so neither is exercised by the current app; both are
+  relevant again once/if the write-driving layer (pace car, race manager)
+  comes back.
+- **The CU's `start` field (0-9)**: only documented as "start light
+  indicator" with no per-value meaning -- the monitor just shows the raw
+  number live. Watching it during a real countdown (now easy, since it's
+  right there on the page) is exactly how to figure out what the values
+  actually mean.
+- **`Status.mode`'s `PIT_LANE_MODE` bit**: indicates whether a physical
+  pit-lane adapter is even connected, i.e. whether `pit[]` means
+  anything at all -- decoded and shown, not yet validated against an
+  actual adapter.
+
+See [`CLAUDE.md`](CLAUDE.md)'s "Race manager" section for the additional
+open questions that only mattered for the now-removed race-management
+layer (jump-start detection, safety car placement, ghost delta
+continuity, etc.) -- still relevant if/when that layer is rebuilt.

@@ -7,10 +7,6 @@ pyserial>=3.5
 # needed to run the app in mock mode.
 carreralib>=1.0.3
 
-# Local physical gamepad support (Xbox controllers etc). Not needed for
-# browser/keyboard/touch control.
-pygame>=2.5
-
 # Testing
 pytest>=8.0
 httpx>=0.27

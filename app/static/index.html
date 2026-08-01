@@ -3,232 +3,56 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Carrera Digital RMS</title>
+<title>Carrera CU Monitor</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 <header>
-  <h1>Carrera Digital RMS</h1>
-  <span><span id="conn-dot" class="dot"></span> <span id="conn-text">disconnected</span></span>
-  <span class="badge" id="state-badge">idle</span>
-
-  <select id="mode-select">
-    <option value="race">Race mode</option>
-    <option value="time_attack">Time attack mode</option>
-    <option value="qualifying">Qualifying (optional)</option>
-  </select>
-
-  <select id="weather-select">
-    <option value="dry">Weather: Dry</option>
-    <option value="damp">Weather: Damp</option>
-    <option value="wet">Weather: Wet</option>
-  </select>
-
-  <button id="debug-toggle">Debug</button>
+  <h1>Carrera CU Monitor</h1>
+  <span id="conn-badge" class="badge">connecting...</span>
+  <button id="reconnect-btn">Reconnect</button>
 </header>
 
-<div id="cu-backend-banner" class="cu-backend-banner">connecting...</div>
+<section id="backend-panel">
+  <div><b>Backend:</b> <span id="backend-text">-</span></div>
+  <div><b>Requested device:</b> <span id="device-text">-</span></div>
+  <div><b>CU connected:</b> <span id="cu-connected-text">-</span></div>
+  <div><b>Connect attempts:</b> <span id="connect-attempts-text">-</span></div>
+  <div id="last-error-row"><b>Last error:</b> <span id="last-error-text">-</span></div>
+</section>
 
-<div id="start-lights" class="start-lights">
-  <div class="light" data-n="1"></div>
-  <div class="light" data-n="2"></div>
-  <div class="light" data-n="3"></div>
-  <div class="light" data-n="4"></div>
-  <div class="light" data-n="5"></div>
+<div class="grid">
+  <section id="status-panel">
+    <h2>Status</h2>
+    <table id="fuel-pit-table">
+      <thead><tr><th>Addr</th><th>Fuel (0-15)</th><th>Fuel %</th><th>Pit</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="kv"><b>start</b> (0-9, light sequence): <span id="start-value">-</span></div>
+    <div class="kv"><b>mode</b>: <span id="mode-value">-</span></div>
+    <div class="kv"><b>display</b>: <span id="display-value">-</span></div>
+  </section>
+
+  <section id="timer-panel">
+    <h2>Timer events (most recent first)</h2>
+    <table id="timer-table">
+      <thead><tr><th>Wall time</th><th>Addr</th><th>Sector</th><th>CU timestamp (ms)</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
 </div>
 
-<div id="stop-banner" class="stop-banner"></div>
-<div id="safety-car-banner" class="safety-car-banner"></div>
+<section id="raw-panel">
+  <h2>Raw data stream (carreralib's own wire-level send/receive log)</h2>
+  <p class="muted">
+    Every raw message sent to and received from the CU, over serial or as
+    raw BLE notification payloads -- this is carreralib's own DEBUG
+    logging, captured rather than only printed. Empty against the mock
+    backend (nothing goes over a wire).
+  </p>
+  <div id="raw-log"></div>
+</section>
 
-<div class="controls">
-  <button class="btn-go" id="go-btn" title="Presses the CU's own START/ENTER button and waits for its native light sequence to finish before starting lap timing">GREEN &#9654; GO (CU synced)</button>
-  <button id="go-instant-btn" title="Skip the CU's light sequence entirely, go straight to RUNNING -- for debugging">Quick Start (skip lights)</button>
-  <button class="btn-stop" id="stop-btn">STOP</button>
-  <button id="resume-btn">Resume</button>
-  <button id="reset-btn">Reset</button>
-  <button id="safety-car-btn">Safety Car</button>
-  <button id="safety-car-end-btn">End Safety Car</button>
-</div>
-
-<main>
-  <div>
-    <section>
-      <h2>Ranking</h2>
-      <table>
-        <thead>
-          <tr><th>#</th><th>Car</th><th>Laps</th><th>Best</th><th>Last</th><th>Delta</th><th>Gap</th><th>Pen.</th></tr>
-        </thead>
-        <tbody id="ranking-body"></tbody>
-      </table>
-    </section>
-
-    <section>
-      <h2>Cars &amp; controllers</h2>
-      <div class="cars" id="car-grid"></div>
-    </section>
-
-    <section>
-      <h2>Race strategy planner</h2>
-      <div class="row">
-        <label>Car</label>
-        <select id="strategy-car-select"></select>
-        <label>Total laps</label>
-        <input type="number" id="strategy-total-laps" value="20" min="1" style="width:5em">
-        <label>Avg lap (s)</label>
-        <input type="number" id="strategy-avg-lap" value="6.0" step="0.5" style="width:5em">
-        <button id="strategy-recommend-btn">Use recommended (balanced) plan</button>
-      </div>
-      <div class="row">
-        <label>Fuel load</label>
-        <input type="range" id="strategy-fuel-load" min="0" max="100" step="1" value="100">
-        <span id="strategy-fuel-load-val">100</span>
-        <label>Compound</label>
-        <select id="strategy-compound">
-          <option value="soft">Soft (fast, wears quick)</option>
-          <option value="medium" selected>Medium</option>
-          <option value="hard">Hard (slow, lasts)</option>
-        </select>
-        <label>Pit laps (comma-sep)</label>
-        <input type="text" id="strategy-pit-laps" placeholder="e.g. 10, 22" style="width:8em">
-        <button id="strategy-save-btn">Save strategy</button>
-      </div>
-      <p style="color:var(--muted); font-size:0.85rem">
-        Match your compound to the weather forecast below for a speed/brake
-        bonus -- mismatched tyres (e.g. soft in the wet) cost you both.
-        New to this? "Use recommended plan" gives an evenly-balanced
-        default assuming no overtake-boost usage.
-      </p>
-      <canvas id="strategy-graph" width="900" height="260"></canvas>
-    </section>
-
-    <section>
-      <h2>Weather forecast (by leader's lap, not clock time)</h2>
-      <div class="row">
-        <button id="forecast-generate-btn">Generate random forecast</button>
-        <button id="forecast-clear-btn">Clear forecast</button>
-      </div>
-      <div id="forecast-list" class="row"></div>
-    </section>
-
-    <section>
-      <h2>Pace car / ghost replay</h2>
-      <div class="row">
-        <label>Recording</label>
-        <select id="pace-recording"></select>
-        <button id="pace-refresh">Refresh list</button>
-      </div>
-      <div class="row">
-        <label>Target address</label>
-        <input type="number" id="pace-address" value="7" min="0" max="7" style="width:4em">
-        <label>Speed scale</label>
-        <input type="range" id="pace-scale" min="0.25" max="2.5" step="0.05" value="1.0">
-        <span id="pace-scale-val">1.00x</span>
-        <label><input type="checkbox" id="pace-loop"> Loop</label>
-      </div>
-      <div class="row">
-        <button id="pace-play">Play</button>
-        <button id="pace-stop">Stop</button>
-      </div>
-    </section>
-  </div>
-
-  <div>
-    <section id="debug-panel">
-      <h2>CU backend</h2>
-      <p style="color:var(--muted); font-size:0.8rem">
-        Which CU this session is actually talking to -- also shown as the
-        banner under the header. "MOCK" means no real hardware is
-        connected; everything you see is simulated.
-      </p>
-      <pre id="cu-backend-detail" style="font-family:ui-monospace,monospace; font-size:0.8rem; color:var(--muted); white-space:pre-wrap;"></pre>
-      <h2>CU status (raw)</h2>
-      <p style="color:var(--muted); font-size:0.8rem">
-        What the Control Unit itself is reporting right now -- fuel[]/pit[]
-        are 0-15 (CU's own scale, not this app's 0-100%), useful for
-        confirming real hardware data is actually flowing in.
-      </p>
-      <div id="cu-mode-decoded" style="font-family:ui-monospace,monospace; font-size:0.8rem; color:var(--muted);"></div>
-      <pre id="cu-status-raw" style="font-family:ui-monospace,monospace; font-size:0.8rem; color:var(--muted); white-space:pre-wrap;">not connected / no Status seen yet</pre>
-      <h2>Debug log</h2>
-      <div id="debug-log"></div>
-      <h2>Full status snapshot</h2>
-      <p style="color:var(--muted); font-size:0.8rem">
-        Everything above (and more) as one JSON blob -- click to select
-        it all, then copy/paste it whole when reporting a problem, instead
-        of copying the rendered page piecemeal.
-      </p>
-      <button id="copy-debug-btn">Copy snapshot to clipboard</button>
-      <textarea id="debug-snapshot" readonly rows="12"
-        style="width:100%; font-family:ui-monospace,monospace; font-size:0.7rem; margin-top:0.4rem;"></textarea>
-    </section>
-
-    <section id="personal-screen">
-      <h2>Your controller</h2>
-      <div class="row">
-        <label>Controller ID</label>
-        <input type="text" id="my-controller-id" value="player1">
-      </div>
-      <div class="row">
-        <label>Assign to car</label>
-        <select id="my-car-select"></select>
-        <input type="text" id="my-car-name" placeholder="driver name">
-        <button id="assign-btn">Assign</button>
-      </div>
-
-      <div id="personal-start-lights" class="start-lights"></div>
-      <div id="personal-overtake-banner" class="overtake-banner">OVERTAKE MODE</div>
-
-      <p style="color:var(--muted); font-size:0.85rem">
-        Hold W / Up for throttle, S / Down for brake, A for lane change,
-        Space for STOP -- or use the big on-screen pedals below (built for
-        a phone screen). Works from any device on the local network, each
-        with its own Controller ID.
-      </p>
-
-      <div class="pedals">
-        <button class="pedal-brake" id="pedal-brake">BRAKE</button>
-        <button class="pedal-throttle" id="pedal-throttle">THROTTLE</button>
-      </div>
-
-      <button id="overtake-btn" class="btn-overtake">PUSH TO PASS</button>
-      <div id="overtake-status" class="overtake-status"></div>
-
-      <div class="row">
-        <button id="pit-toggle-btn">Enter Pit</button>
-        <span id="ghost-delta-display"></span>
-      </div>
-
-      <div class="row">
-        <label>Throttle curve</label>
-        <input type="range" id="sens-throttle-exp" min="0.3" max="3" step="0.1" value="1">
-        <span id="sens-throttle-exp-val">1.0</span>
-      </div>
-      <div class="row">
-        <label>Brake curve</label>
-        <input type="range" id="sens-brake-exp" min="0.3" max="3" step="0.1" value="1">
-        <span id="sens-brake-exp-val">1.0</span>
-      </div>
-      <div class="row">
-        <button id="sens-apply">Apply sensitivity</button>
-      </div>
-      <div class="row">
-        <button id="rec-start">Start recording (this car)</button>
-        <button id="rec-stop">Stop &amp; save recording</button>
-        <input type="text" id="rec-name" placeholder="recording name" value="lap1">
-      </div>
-      <div class="row">
-        <input type="text" id="ghost-name" placeholder="ghost recording name">
-        <button id="ghost-set-btn">Set ghost</button>
-        <button id="ghost-clear-btn">Clear ghost</button>
-      </div>
-      <div class="row">
-        <label><input type="checkbox" id="sound-enable" checked> Sound &amp; voice</label>
-      </div>
-    </section>
-  </div>
-</main>
-
-<script src="/static/sound.js"></script>
-<script src="/static/app.js"></script>
+<script src="/static/monitor.js"></script>
 </body>
 </html>
