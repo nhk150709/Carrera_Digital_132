@@ -22,6 +22,13 @@ def test_state_endpoint_reflects_initial_idle_state():
         assert len(data["cars"]) == 6
 
 
+def test_state_endpoint_exposes_cu_backend_so_mock_vs_real_is_unmistakable():
+    with make_client() as client:
+        data = client.get("/api/state").json()
+        # No CARRERA_RMS_CU_DEVICE set in the test environment -> mock.
+        assert data["cu_backend"].startswith("MOCK")
+
+
 def test_assign_car_and_change_mode_and_weather():
     with make_client() as client:
         resp = client.post("/api/cars/0/assign", json={"controller_id": "p1", "name": "Red 7"})

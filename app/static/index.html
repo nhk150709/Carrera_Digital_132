@@ -27,6 +27,8 @@
   <button id="debug-toggle">Debug</button>
 </header>
 
+<div id="cu-backend-banner" class="cu-backend-banner">connecting...</div>
+
 <div id="start-lights" class="start-lights">
   <div class="light" data-n="1"></div>
   <div class="light" data-n="2"></div>
@@ -39,8 +41,8 @@
 <div id="safety-car-banner" class="safety-car-banner"></div>
 
 <div class="controls">
-  <button class="btn-go" id="go-btn">GREEN &#9654; GO</button>
-  <button id="go-instant-btn" title="Skip the 5-light sequence, go straight to RUNNING -- for debugging">Quick Start (skip lights)</button>
+  <button class="btn-go" id="go-btn" title="Presses the CU's own START/ENTER button and waits for its native light sequence to finish before starting lap timing">GREEN &#9654; GO (CU synced)</button>
+  <button id="go-instant-btn" title="Skip the CU's light sequence entirely, go straight to RUNNING -- for debugging">Quick Start (skip lights)</button>
   <button class="btn-stop" id="stop-btn">STOP</button>
   <button id="resume-btn">Resume</button>
   <button id="reset-btn">Reset</button>
@@ -132,15 +134,23 @@
 
   <div>
     <section id="debug-panel">
-      <h2>Debug log</h2>
-      <div id="debug-log"></div>
+      <h2>CU backend</h2>
+      <p style="color:var(--muted); font-size:0.8rem">
+        Which CU this session is actually talking to -- also shown as the
+        banner under the header. "MOCK" means no real hardware is
+        connected; everything you see is simulated.
+      </p>
+      <pre id="cu-backend-detail" style="font-family:ui-monospace,monospace; font-size:0.8rem; color:var(--muted); white-space:pre-wrap;"></pre>
       <h2>CU status (raw)</h2>
       <p style="color:var(--muted); font-size:0.8rem">
         What the Control Unit itself is reporting right now -- fuel[]/pit[]
         are 0-15 (CU's own scale, not this app's 0-100%), useful for
         confirming real hardware data is actually flowing in.
       </p>
+      <div id="cu-mode-decoded" style="font-family:ui-monospace,monospace; font-size:0.8rem; color:var(--muted);"></div>
       <pre id="cu-status-raw" style="font-family:ui-monospace,monospace; font-size:0.8rem; color:var(--muted); white-space:pre-wrap;">not connected / no Status seen yet</pre>
+      <h2>Debug log</h2>
+      <div id="debug-log"></div>
     </section>
 
     <section id="personal-screen">

@@ -43,6 +43,7 @@ class RaceSession:
                  clock: Callable[[], float] = time.monotonic,
                  rng: random.Random | None = None):
         self.cu = cu
+        self.cu_backend = cu.describe()
         self.config = config or SessionConfig()
         self.clock = clock
         self._rng = rng or random.Random()
@@ -71,6 +72,12 @@ class RaceSession:
         self.debug_log.append(f"{self.clock():.2f} {message}")
         if len(self.debug_log) > 1000:
             self.debug_log = self.debug_log[-1000:]
+
+    def log_debug(self, message: str) -> None:
+        """Public entry point for network-layer code (e.g. the CU-start
+        sync coroutine in app/network/server.py) to append to the same
+        debug log the UI's debug tab shows."""
+        self._log(message)
 
     def assign_controller(self, address: int, controller: InputController) -> None:
         self.controllers[address] = controller
@@ -118,10 +125,20 @@ class RaceSession:
         self.start_phase = None
         self.engine.begin_countdown(self.clock())
 
-    def go(self) -> None:
+    def go(self, press_cu_start: bool = True) -> None:
+        """press_cu_start=False is for callers (the CU-start-sync flow in
+        app/network/server.py) that already pressed the CU's START/ENTER
+        button themselves before calling this -- pressing it a second time
+        here would double-press the physical button, which (if it toggles,
+        as stop()/resume() assume) could pause the race that's just about
+        to start instead of merely confirming it."""
         now = self.clock()
         self.engine.go(now)
-        self.cu.start()
+        if press_cu_start:
+            try:
+                self.cu.start()
+            except UnsupportedCommand as exc:
+                self._log(f"CU go command rejected: {exc}")
 
     def stop(self, triggered_by: int | None = None, penalize_trigger: bool = False) -> None:
         self.engine.stop(self.clock(), triggered_by=triggered_by, penalize_trigger=penalize_trigger)

@@ -120,6 +120,17 @@ input[type="range"] { flex: 1; }
 .start-lights .light.lit { background: var(--red); box-shadow: 0 0 12px var(--red); }
 .start-lights .light.go { background: var(--green); box-shadow: 0 0 16px var(--green); }
 
+.cu-backend-banner {
+  margin: 0 1rem;
+  padding: 0.4rem 1rem;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 0.85rem;
+  text-align: center;
+}
+.cu-backend-banner.cu-mock { background: #3a2f0d; color: var(--yellow); border: 1px solid var(--yellow); }
+.cu-backend-banner.cu-real { background: #0d3a1a; color: var(--green); border: 1px solid var(--green); }
+
 .stop-banner, .safety-car-banner {
   display: none;
   margin: 0 1rem;

@@ -37,11 +37,15 @@ function connect() {
 function fmt(t) { return t === null || t === undefined ? "-" : t.toFixed(2); }
 
 function renderStartLights(container, phase) {
+  // The countdown itself is now driven by the CU's own native light
+  // sequence (see _run_cu_synced_start in app/network/server.py), not
+  // timed by this app -- so there's no per-light timing to mirror here.
+  // "ARMED" just means "button pressed, waiting on the CU"; all 5 lights
+  // shown lit together represents that wait, then "GO" flips to green.
   const isGo = phase === "GO";
-  const litCount = phase && /^L[1-5]$/.test(phase) ? parseInt(phase[1], 10) : 0;
+  const isArmed = phase === "ARMED";
   container.querySelectorAll(".light").forEach((el) => {
-    const n = parseInt(el.dataset.n, 10);
-    el.classList.toggle("lit", !isGo && n <= litCount);
+    el.classList.toggle("lit", isArmed);
     el.classList.toggle("go", isGo);
   });
 }
@@ -128,15 +132,51 @@ function renderPersonalPanel(state) {
   }
 }
 
+const MODE_BITS = [
+  [0x1, "FUEL_MODE"],
+  [0x2, "REAL_MODE"],
+  [0x4, "PIT_LANE_MODE"],
+  [0x8, "LAP_COUNTER_MODE"],
+];
+
+function renderCuBackend(state) {
+  const backend = state.cu_backend || "unknown";
+  const isMock = backend.startsWith("MOCK");
+
+  const banner = $("cu-backend-banner");
+  if (banner) {
+    banner.textContent = backend;
+    banner.classList.toggle("cu-mock", isMock);
+    banner.classList.toggle("cu-real", !isMock);
+  }
+  const detail = $("cu-backend-detail");
+  if (detail) detail.textContent = backend;
+}
+
+function renderCuStatus(state) {
+  $("cu-status-raw").textContent = state.cu_status
+    ? JSON.stringify(state.cu_status, null, 2)
+    : "not connected / no Status seen yet";
+  const decodedEl = $("cu-mode-decoded");
+  if (!decodedEl) return;
+  if (!state.cu_status) {
+    decodedEl.textContent = "";
+    return;
+  }
+  const mode = state.cu_status.mode || 0;
+  const flags = MODE_BITS.filter(([bit]) => (mode & bit) !== 0).map(([, name]) => name);
+  decodedEl.textContent = `mode=${mode} (${flags.length ? flags.join(", ") : "none set"}) | ` +
+    `start=${state.cu_status.start} | display=${state.cu_status.display}`;
+}
+
 function render(state) {
   $("state-badge").textContent = state.state;
   renderStartLights($("start-lights"), state.start_phase);
   renderStartLights($("personal-start-lights"), state.start_phase);
   renderStopBanner(state);
   renderSafetyCarBanner(state);
-  $("cu-status-raw").textContent = state.cu_status
-    ? JSON.stringify(state.cu_status, null, 2)
-    : "not connected / no Status seen yet";
+  renderCuBackend(state);
+  renderCuStatus(state);
   renderForecast(state);
 
   const rankBody = $("ranking-body");

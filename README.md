@@ -13,7 +13,16 @@ machine with Python -- that:
 
 - talks to the CU over serial or BLE (via `carreralib`) for real hardware,
   or a built-in simulator (`MockCUClient`) so the whole thing is usable
-  and testable with no hardware at all;
+  and testable with no hardware at all -- which backend is actually active
+  is always shown as a banner under the header (and in the debug tab), so
+  it's never ambiguous whether you're looking at simulated or real data;
+- GO presses the CU's own physical START/ENTER button (native light
+  sequence, not an app-driven one) and starts lap timing once the CU's own
+  `start` status field signals the sequence finished, so timing is
+  synchronized with the real lights rather than a separately-guessed
+  delay (heuristic -- see `app/network/server.py::_run_cu_synced_start`);
+  "Quick Start" skips this and goes straight to running, for debugging
+  without hardware;
 - serves a browser-based dashboard (lap time, position, delta, penalties,
   fuel, big start/stop buttons, car/controller assignment, weather and
   debug panels) over one local web server -- every browser on the network,

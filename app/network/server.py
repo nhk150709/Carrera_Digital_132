@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import random
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -20,7 +19,7 @@ from starlette.requests import HTTPConnection
 
 from app.controllers.base import ControllerInput
 from app.controllers.web import WebController
-from app.cu.base import CUClient
+from app.cu.base import CUClient, UnsupportedCommand
 from app.cu.mock_client import MockCUClient
 from app.network import schemas
 from app.network.arduino_api import ArduinoBridge
@@ -63,6 +62,20 @@ def build_cu_client() -> CUClient:
     else:
         cu = MockCUClient(addresses=addresses, base_lap_time=6.0)
     cu.connect()
+
+    # Loud and impossible to miss on purpose: this exact confusion (running
+    # against the mock without realizing it, e.g. because CARRERA_RMS_CU_
+    # DEVICE was left unset/commented out in .env) has already produced a
+    # real bug report where telemetry silently matched the mock's defaults.
+    # Printed directly (not just logged) so it survives even if logging
+    # level/handlers aren't configured to show INFO, and also surfaced live
+    # in the UI (state["cu_backend"]) so it's checkable without a terminal.
+    banner = f"  CU BACKEND: {cu.describe()}  "
+    rule = "=" * len(banner)
+    print(rule, flush=True)
+    print(banner, flush=True)
+    print(rule, flush=True)
+    logger.warning("CU backend: %s", cu.describe())
     return cu
 
 
@@ -155,43 +168,82 @@ async def api_state(request: Request) -> dict:
     return serialize(get_session(request))
 
 
-LIGHT_INTERVAL_SECONDS = 1.0
+CU_START_SYNC_POLL_INTERVAL = 0.1
+CU_START_SYNC_TIMEOUT_SECONDS = 20.0
 
 
-async def _run_start_sequence(app: FastAPI) -> None:
-    """Drives the 5-light countdown (F1-style: lights on one at a time,
-    then all extinguish together = go), with a randomized hold before the
-    green to discourage anticipation-based jump starts. Publishes each
-    phase to the Arduino bridge (if configured) so external LEDs can be
-    kept in sync, and only calls session.go() once the final GO phase is
-    actually sent.
+async def _run_cu_synced_start(app: FastAPI) -> None:
+    """Presses the CU's own physical START/ENTER button -- its native
+    light sequence takes over from there, not an independent software
+    countdown -- then waits for the CU's own `start` status field to
+    signal the sequence has finished before calling session.go(), so lap
+    timing starts in sync with the real lights instead of on a guessed
+    software delay.
+
+    HEURISTIC, NOT CONFIRMED: carreralib's own docs only say `start` is a
+    "0..9 start light indicator" with no documented per-value meaning.
+    This treats the first return to 0 *after* having seen a nonzero value
+    as "green" (dark before the sequence, steps through nonzero values
+    during it, dark again = go) -- matches how the physical light bar
+    looks, but hasn't been independently confirmed against the exact
+    firmware codes. Watch the debug tab's raw `start` value during a real
+    countdown to confirm or correct this; if it fires at the wrong moment,
+    use "Quick Start" instead and report what values you actually saw.
+
+    Falls back to calling go() after CU_START_SYNC_TIMEOUT_SECONDS
+    regardless of the above (e.g. running the mock CU, whose `start`
+    field is always 0 and would otherwise never trigger the transition),
+    so the countdown can never get stuck forever.
     """
     session: RaceSession = app.state.session
     bridge: ArduinoBridge | None = app.state.arduino_bridge
 
-    def publish(phase: str) -> None:
-        session.set_start_phase(phase)
-        if bridge is not None:
-            bridge.publish_start_phase(phase)
+    session.set_start_phase("ARMED")
+    if bridge is not None:
+        bridge.publish_start_phase("ARMED")
+    try:
+        session.cu.start()
+    except UnsupportedCommand as exc:
+        session.log_debug(f"CU start-button press rejected: {exc}")
+    session.log_debug("pressed CU START/ENTER button; watching start-light field for sync")
 
-    publish("ARMED")
-    for i in range(1, 6):
-        await asyncio.sleep(LIGHT_INTERVAL_SECONDS)
+    seen_nonzero = False
+    elapsed = 0.0
+    while elapsed < CU_START_SYNC_TIMEOUT_SECONDS:
         if session.engine.state != RaceState.COUNTDOWN:
-            return  # countdown was aborted (e.g. a manual stop)
-        publish(f"L{i}")
+            return  # aborted (e.g. a manual stop)
+        status = session.raw_cu_status()
+        if status is not None:
+            value = status["start"]
+            if value != 0:
+                seen_nonzero = True
+            elif seen_nonzero:
+                session.log_debug(f"CU start field returned to 0 after {elapsed:.1f}s -- "
+                                   "treating as green, starting race in sync")
+                session.set_start_phase("GO")
+                if bridge is not None:
+                    bridge.publish_start_phase("GO")
+                session.go(press_cu_start=False)  # already pressed above
+                return
+        await asyncio.sleep(CU_START_SYNC_POLL_INTERVAL)
+        elapsed += CU_START_SYNC_POLL_INTERVAL
 
-    await asyncio.sleep(LIGHT_INTERVAL_SECONDS + random.uniform(0.2, 1.5))
-    if session.engine.state != RaceState.COUNTDOWN:
-        return
-    publish("GO")
-    session.go()
+    session.log_debug(
+        f"CU start-field sync timed out after {CU_START_SYNC_TIMEOUT_SECONDS:.0f}s "
+        "(no nonzero->0 transition seen) -- starting race on timeout instead; "
+        "this may not exactly match the physical lights"
+    )
+    if session.engine.state == RaceState.COUNTDOWN:
+        session.set_start_phase("GO")
+        if bridge is not None:
+            bridge.publish_start_phase("GO")
+        session.go(press_cu_start=False)  # already pressed above
 
 
 @app.post("/api/race/countdown")
 async def api_countdown(request: Request) -> dict:
     get_session(request).begin_countdown()
-    asyncio.create_task(_run_start_sequence(request.app))
+    asyncio.create_task(_run_cu_synced_start(request.app))
     return {"ok": True}
 
 

@@ -13,6 +13,7 @@ def serialize(session: RaceSession) -> dict:
     strategies = session.strategy_book.all()
 
     return {
+        "cu_backend": session.cu_backend,
         "state": engine.state.value,
         "start_phase": session.start_phase,
         "mode": engine.mode.value,

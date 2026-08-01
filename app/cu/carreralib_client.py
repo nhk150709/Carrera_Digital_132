@@ -121,6 +121,11 @@ class CarreralibCUClient(CUClient):
         self._clock_offset_ms: float | None = None
         self._latest_status: Status | None = None
 
+    def describe(self) -> str:
+        # self.device is resolved from "auto" to a real address inside
+        # connect(), so this reports the actual address once connected.
+        return f"REAL (carreralib, device={self.device})"
+
     def connect(self, ble_connect_attempts: int = 4) -> None:
         import carreralib  # lazy import: not a hard dependency for mock-mode use
 

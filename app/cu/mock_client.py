@@ -33,6 +33,9 @@ class MockCUClient(CUClient):
         self._connected = False
         self.start_call_count = 0  # lets tests confirm the CU's start/pause is actually commanded
 
+    def describe(self) -> str:
+        return "MOCK (simulated CU -- no real hardware connected)"
+
     def connect(self) -> None:
         self._connected = True
 

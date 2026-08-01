@@ -87,6 +87,23 @@ def test_stop_and_resume_also_command_the_cu_not_just_local_state():
     assert cu.start_call_count == starts_after_go + 2
 
 
+def test_session_exposes_cu_backend_identity():
+    session, cu = make_session(addresses=(0,))
+    assert session.cu_backend == cu.describe()
+    assert session.cu_backend.startswith("MOCK")
+
+
+def test_go_with_press_cu_start_false_does_not_press_the_button():
+    session, cu = make_session(addresses=(0,))
+    session.begin_countdown()
+    before = cu.start_call_count
+    session.go(press_cu_start=False)
+    assert cu.start_call_count == before  # engine still starts...
+    assert session.engine.state == RaceState.RUNNING
+    # ...but the caller (e.g. the CU-start-sync flow) is trusted to have
+    # already pressed it themselves, so go() must not press it again.
+
+
 def test_early_movement_during_countdown_flags_jump_start():
     session, cu = make_session(addresses=(0,))
     clock: _FakeClock = session.clock
@@ -118,6 +135,7 @@ def test_unsupported_command_is_logged_not_raised():
     from app.cu.protocol import Status
 
     class RejectingCU(CUClient):
+        def describe(self): return "REJECTING (test stub)"
         def connect(self): pass
         def disconnect(self): pass
         def read_status(self): return Status(fuel=(0,), pit=(False,), start=0, mode=0, display=1)

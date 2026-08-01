@@ -22,6 +22,12 @@ class UnsupportedCommand(RuntimeError):
 
 class CUClient(ABC):
     @abstractmethod
+    def describe(self) -> str:
+        """Short human-readable identity string (mock vs. real, and which
+        device) -- surfaced in startup logs and the debug tab so it's never
+        ambiguous which backend a running session is actually talking to."""
+
+    @abstractmethod
     def connect(self) -> None: ...
 
     @abstractmethod

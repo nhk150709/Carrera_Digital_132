@@ -67,10 +67,16 @@ pages on this point):
   reported domain* are ever subtracted from each other. Keep this
   invariant if touching engine.py — don't reintroduce clock mixing.
 - The CU's `start` status field is a **0-9 state code** for its own
-  built-in start-light sequence — useful context, though this app drives
-  its own independent 5-light Arduino sequence
-  (`app/network/server.py::_run_start_sequence`) rather than depending on
-  reading that field.
+  built-in start-light sequence. Real firmware semantics per value are
+  still **not confirmed** (carreralib's own docs just say "0..9 start
+  light indicator"). The GO button (`app/network/server.py::
+  _run_cu_synced_start`) now presses the CU's own START/ENTER button
+  directly (`cu.start()`) instead of running an independent software
+  light sequence, then treats the first return to `0` after a nonzero
+  value as "green" as a heuristic (falls back to a timeout if that
+  transition is never observed, e.g. against the mock CU, whose `start`
+  is always 0). Watch the debug tab's raw `start` value during a real
+  countdown to confirm/correct this heuristic against actual hardware.
 - `press(PACE_CAR_ESC_BUTTON_ID)` simulates the CU's own Pace Car/ESC
   button; `setpos()`/`setlap()`/`clrpos()` drive an official Carrera
   **Position Tower** accessory, if one is ever added.
