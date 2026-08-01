@@ -80,6 +80,43 @@ pages on this point):
 - `press(PACE_CAR_ESC_BUTTON_ID)` simulates the CU's own Pace Car/ESC
   button; `setpos()`/`setlap()`/`clrpos()` drive an official Carrera
   **Position Tower** accessory, if one is ever added.
+- **Full audit of everything `carreralib.cu.ControlUnit` exposes** (done
+  by reading its entire source, not just the parts this app already
+  used), in response to "is that all the information available, and what
+  else can be inferred":
+  - `ignore(mask)` — an 8-bit bitmask write command telling the CU to
+    ignore the listed controller addresses' own physical/wireless input
+    entirely. **Not yet used anywhere in this app, and not independently
+    confirmed against real hardware** — but if it does what its one-line
+    docstring says, it's the actual mechanism for cleanly handing an
+    address over to app-driven control (`set_speed`/`set_brake`) without
+    fighting a live driver's real controller, rather than just racing
+    against it. Worth testing before relying on it for anything.
+  - `reset()` — resets the CU's own internal timer. Not currently called
+    by this app (`RaceSession`/`RaceEngine` reset their own state only,
+    independent of the CU's timer) — could be added to `/api/race/reset`
+    if keeping the CU's own timer in sync ever matters.
+  - Button IDs beyond the two already used (`START_ENTER_BUTTON_ID`,
+    `PACE_CAR_ESC_BUTTON_ID`): `SPEED_BUTTON_ID`, `BRAKE_BUTTON_ID`,
+    `FUEL_BUTTON_ID`, `CODE_BUTTON_ID` — these simulate pressing the
+    CU's own physical SPEED/BRAKE/FUEL/CODE buttons (global handicap
+    levels, fuel-mode toggle, and wireless-controller pairing mode,
+    respectively, based on what those buttons do on the real hardware —
+    not independently confirmed via this library). Not used by this app.
+  - **`Status.mode`'s bits aren't just informational** — `PIT_LANE_MODE`
+    (`0x4`) specifically indicates whether a physical pit-lane adapter is
+    even connected, i.e. whether `pit[]` means anything at all. This app
+    now gates on it (`app/cu/protocol.py::PIT_LANE_MODE`,
+    `RaceSession._sync_pit_from_cu()`) rather than trusting an
+    all-`False` `pit[]` that might just mean "no adapter", not "no cars
+    in the pit".
+  - Nothing beyond `fuel[]`/`pit[]`/`Timer`/`start`/`mode`/`display`
+    exists in the protocol at all — confirmed by reading every method on
+    `ControlUnit`, not just the docstring table. In particular there is
+    still no live throttle/brake/speed readback for a physically-driven
+    car anywhere in the library, and no tyre-wear concept of any kind —
+    both remain permanently unconfirmable/nonexistent by design, not
+    just unimplemented.
 
 ## Key facts (see `docs/reference/protocol-notes.md` for full detail)
 

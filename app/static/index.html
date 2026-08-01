@@ -151,6 +151,15 @@
       <pre id="cu-status-raw" style="font-family:ui-monospace,monospace; font-size:0.8rem; color:var(--muted); white-space:pre-wrap;">not connected / no Status seen yet</pre>
       <h2>Debug log</h2>
       <div id="debug-log"></div>
+      <h2>Full status snapshot</h2>
+      <p style="color:var(--muted); font-size:0.8rem">
+        Everything above (and more) as one JSON blob -- click to select
+        it all, then copy/paste it whole when reporting a problem, instead
+        of copying the rendered page piecemeal.
+      </p>
+      <button id="copy-debug-btn">Copy snapshot to clipboard</button>
+      <textarea id="debug-snapshot" readonly rows="12"
+        style="width:100%; font-family:ui-monospace,monospace; font-size:0.7rem; margin-top:0.4rem;"></textarea>
     </section>
 
     <section id="personal-screen">

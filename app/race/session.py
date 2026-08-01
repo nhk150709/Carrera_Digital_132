@@ -13,6 +13,7 @@ from typing import Callable
 
 from app.controllers.base import InputController
 from app.cu.base import CUClient, UnsupportedCommand
+from app.cu.protocol import PIT_LANE_MODE
 from app.race.engine import RaceEngine, RaceEngineConfig
 from app.race.forecast import WeatherForecast
 from app.race.fuel import FuelModel, weather_match_multiplier
@@ -106,15 +107,54 @@ class RaceSession:
     def clear_ghost(self, address: int) -> None:
         self.ghosts.pop(address, None)
 
-    def set_in_pit(self, address: int, in_pit: bool) -> None:
+    def _apply_pit_state(self, address: int, in_pit: bool) -> None:
         car = self.engine.cars.get(address)
         if car is None:
             return
         was_in_pit = car.in_pit
         car.in_pit = in_pit
         if in_pit and not was_in_pit:
-            self.fuel.change_tyres(address)
-            self.events.append({"type": "tyre_change", "address": address})
+            # Entering the pit just arms the tyre change -- it only
+            # actually happens once the refuel completes (see tick()),
+            # so leaving early (a splash-and-go) skips it.
+            car.pending_tyre_change = True
+        elif not in_pit and was_in_pit:
+            car.pending_tyre_change = False
+
+    def set_in_pit(self, address: int, in_pit: bool) -> None:
+        """Manual override -- for the mock CU (which has no real pit-lane
+        sensor to sync from) or real tracks without one wired up. On real
+        hardware with a working pit-lane sensor, _sync_pit_from_cu()
+        overwrites this from the CU's own `pit[]` telemetry every tick, so
+        a manual toggle there won't stick past the next tick."""
+        self._apply_pit_state(address, in_pit)
+
+    def _sync_pit_from_cu(self) -> None:
+        """pit[] is real, CU-reported telemetry (confirmed on the PC port,
+        see CLAUDE.md) available for every address regardless of whether
+        this app is actually driving that car -- unlike fuel/tyre/
+        throttle, which are only meaningful for app-driven cars. Only
+        applied for the real backend: MockCUClient's pit[] never changes
+        on its own (nothing drives it), so syncing it here would just
+        stomp the mock/demo manual pit toggle every tick for no reason.
+
+        Also gated on the CU's own mode.PIT_LANE_MODE bit: that flag
+        means a physical pit-lane adapter is actually connected, i.e.
+        that pit[] is meaningful at all -- confirmed from carreralib's
+        Status.PIT_LANE_MODE docstring. Without a pit-lane adapter, pit[]
+        would just be a meaningless all-False array; blindly syncing that
+        would wipe out any manual pit toggle for real hardware that lacks
+        the adapter, so this only auto-syncs once the CU itself confirms
+        the adapter is present.
+        """
+        if not self.cu_backend.startswith("REAL"):
+            return
+        status = self.raw_cu_status()
+        if status is None or not (status["mode"] & PIT_LANE_MODE):
+            return
+        for address in self.engine.cars:
+            if address < len(status["pit"]):
+                self._apply_pit_state(address, status["pit"][address])
 
     def set_start_phase(self, phase: str | None) -> None:
         self.start_phase = phase
@@ -195,6 +235,8 @@ class RaceSession:
                 self._maybe_announce_final_lap(event.address, record.lap_number)
                 self.safety_car.maybe_random_trigger(rng=self._rng)
 
+        self._sync_pit_from_cu()
+
         if self.forecast is not None:
             leader_lap = max((c.lap_count for c in self.engine.cars.values()), default=0)
             new_level = self.forecast.advance(leader_lap)
@@ -266,7 +308,15 @@ class RaceSession:
             except UnsupportedCommand as exc:
                 self._log(f"set_brake rejected for address={address}: {exc}")
 
-            if not broken_down:
+            if car.in_pit:
+                # In the pit box: refuelling, not driving -- advance the
+                # refuel instead of the normal throttle-based drain/wear.
+                self.fuel.refuel_tick(address, dt)
+                if car.pending_tyre_change and self.fuel.is_full(address):
+                    self.fuel.change_tyres(address)
+                    car.pending_tyre_change = False
+                    self.events.append({"type": "tyre_change", "address": address})
+            elif not broken_down:
                 self.fuel.update(address, inp.throttle, inp.brake, dt, boosting=boosting)
             car.fuel = self.fuel.fuel(address)
             car.tyre_wear = self.fuel.tyre_wear(address)

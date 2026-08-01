@@ -11,6 +11,17 @@ def serialize(session: RaceSession) -> dict:
     engine = session.engine
     now = session.clock()
     strategies = session.strategy_book.all()
+    raw_status = session.raw_cu_status()
+
+    def cu_fuel_pct(addr: int) -> float | None:
+        # The CU's own fuel[] reading (0-15 scale), converted to a percent
+        # -- real telemetry, available for every address regardless of
+        # whether this app is actually driving that car (unlike fuel/
+        # tyre_wear below, which are this app's own simulation and only
+        # meaningful for app-driven cars). None if no Status seen yet.
+        if raw_status is None or addr >= len(raw_status["fuel"]):
+            return None
+        return round(raw_status["fuel"][addr] / 15 * 100, 1)
 
     return {
         "cu_backend": session.cu_backend,
@@ -34,6 +45,7 @@ def serialize(session: RaceSession) -> dict:
                 "controller_id": car.controller_id,
                 "fuel": round(car.fuel, 1),
                 "tyre_wear": round(car.tyre_wear, 1),
+                "cu_fuel_pct": cu_fuel_pct(addr),
                 "compound": session.fuel.compound(addr).value,
                 "in_pit": car.in_pit,
                 "jump_start": car.jump_start,

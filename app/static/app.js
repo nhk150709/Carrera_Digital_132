@@ -178,6 +178,8 @@ function render(state) {
   renderCuBackend(state);
   renderCuStatus(state);
   renderForecast(state);
+  const snapshotEl = $("debug-snapshot");
+  if (snapshotEl) snapshotEl.value = JSON.stringify(state, null, 2);
 
   const rankBody = $("ranking-body");
   rankBody.innerHTML = "";
@@ -212,24 +214,33 @@ function render(state) {
     card.className = "car-card";
     if (car.overtake_active) card.classList.add("overtake-active");
     if (car.broken_down) card.classList.add("broken-down");
-    card.innerHTML = `
-      <h3>${car.name || "Car " + addr} <span class="addr">#${addr} ${car.compound}</span></h3>
-      <div>Controller: ${car.controller_id || "-"} ${car.jump_start ? '<span class="jump">JUMP START</span>' : ""}</div>
-      <div>Lap ${car.lap_count} - Best ${fmt(car.best_lap)}s - Penalty ${car.penalty_seconds}s</div>
-      ${car.controller_id ? `
-      <div>Fuel ${Math.round(car.fuel)}%</div>
+    const cuFuelLine = car.cu_fuel_pct !== null && car.cu_fuel_pct !== undefined
+      ? `<div>CU fuel ${Math.round(car.cu_fuel_pct)}% <span style="color:var(--muted); font-size:0.75rem">(real, from hardware)</span></div>
+         <div class="bar fuel"><div style="width:${car.cu_fuel_pct}%"></div></div>`
+      : `<div style="color:var(--muted); font-size:0.8rem">No CU fuel reading yet.</div>`;
+
+    const simBlock = car.controller_id ? `
+      <div style="color:var(--muted); font-size:0.75rem; margin-top:0.4rem">App-simulated (only real for cars actually driven through this app -- see README):</div>
+      <div>Sim fuel ${Math.round(car.fuel)}%</div>
       <div class="bar fuel"><div style="width:${car.fuel}%"></div></div>
-      <div>Tyre wear ${Math.round(car.tyre_wear)}%</div>
+      <div>Sim tyre wear ${Math.round(car.tyre_wear)}%</div>
       <div class="bar tyre"><div style="width:${car.tyre_wear}%"></div></div>
       <div>Throttle ${Math.round(car.throttle * 100)}%</div>
       <div class="bar fuel"><div style="width:${car.throttle * 100}%; background:#2ea043"></div></div>
       <div>Brake ${Math.round(car.brake * 100)}%</div>
       <div class="bar fuel"><div style="width:${car.brake * 100}%; background:#da3633"></div></div>
-      ` : `
-      <div style="color:var(--muted); font-size:0.8rem">No controller assigned -- fuel/tyre/throttle
-      simulation only runs for cars driven through this app (assign one below).
-      Lap timing still works regardless, from the CU's own sensors.</div>
-      `}
+    ` : `
+      <div style="color:var(--muted); font-size:0.8rem">No controller assigned -- tyre wear/throttle/brake
+      are this app's own simulation and only run for cars actually driven through it (assign one below).
+      Lap timing and the CU fuel reading above still work regardless, straight from the CU's own sensors.</div>
+    `;
+
+    card.innerHTML = `
+      <h3>${car.name || "Car " + addr} <span class="addr">#${addr} ${car.compound}</span></h3>
+      <div>Controller: ${car.controller_id || "-"} ${car.jump_start ? '<span class="jump">JUMP START</span>' : ""}</div>
+      <div>Lap ${car.lap_count} - Best ${fmt(car.best_lap)}s - Penalty ${car.penalty_seconds}s</div>
+      ${cuFuelLine}
+      ${simBlock}
       <div>${car.in_pit ? "IN PIT" : ""} ${car.recording ? "REC" : ""} ${car.broken_down ? "BROKEN DOWN" : ""}</div>
     `;
     grid.appendChild(card);
@@ -401,6 +412,23 @@ function setupControls() {
   $("weather-select").onchange = (e) => post("/api/race/weather", { level: e.target.value });
 
   $("debug-toggle").onclick = () => $("debug-panel").classList.toggle("open");
+  $("copy-debug-btn").onclick = async () => {
+    const el = $("debug-snapshot");
+    const text = el.value;
+    const btn = $("copy-debug-btn");
+    try {
+      await navigator.clipboard.writeText(text);
+      btn.textContent = "Copied!";
+    } catch (err) {
+      // Clipboard API needs a secure context (HTTPS/localhost) -- a Pi
+      // reached over plain http:// on the LAN won't have it. Fall back to
+      // manual select so Ctrl+C still works either way.
+      el.focus();
+      el.select();
+      btn.textContent = "Press Ctrl+C now";
+    }
+    setTimeout(() => { btn.textContent = "Copy snapshot to clipboard"; }, 2000);
+  };
 
   $("assign-btn").onclick = () => {
     const addr = $("my-car-select").value;

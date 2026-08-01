@@ -46,11 +46,19 @@ machine with Python -- that:
 
 Race-strategy layer on top of that core loop:
 
-- **fuel/tyres**: fuel never regenerates mid-race (only a pre-race fuel
-  *load* choice, which costs top speed while the tank is fuller -- burns
-  off as it's used); tyres are the only pit-serviceable resource, and
-  wear now visibly cuts top speed and braking as it climbs, not just fuel
-  drain rate. Three compounds (soft/medium/hard) trade grip for wear rate.
+- **fuel/tyres**: a pre-race fuel *load* choice costs top speed while the
+  tank is fuller, burning off as it's used. Fuel refuels during a pit
+  stop (gradually, not instantly), and tyres are only actually changed
+  once that refuel completes -- leave before it's full and you keep worn
+  tyres, a real "splash and go" trade-off. Tyre wear visibly cuts top
+  speed and braking as it climbs, not just fuel drain rate. Three
+  compounds (soft/medium/hard) trade grip for wear rate. **Honesty note**:
+  this whole simulation (fuel drain, tyre wear, refuel) only reflects
+  reality for cars actually driven *through this app* -- a physical hand
+  controller's throttle/brake is unreadable over the CU protocol
+  (confirmed), so none of it runs for a car driven that way. The one
+  fuel number that's real regardless is the CU's own `fuel[]` reading,
+  shown separately on each car card and in the debug tab.
 - **weather**: a track-wide grip cap (existing "weather mode") plus a
   separate per-car tyre/weather match bonus or penalty, and a lap-count-
   based forecast (`app/race/forecast.py`) -- scheduled against the race
@@ -209,11 +217,19 @@ guard logic is covered.
 
 ## Open hardware questions (test before relying on them)
 
-- **Writing a speed value to controller addresses 0-5**: the `carreralib`
-  library allows it, but whether the CU firmware actually honors an
-  external override for a slot with a live physical/wireless controller
-  attached is unconfirmed. Confirmed-safe targets for software speed
-  control are the autonomous car (6) and pace car (7) addresses.
+- **Writing a speed/brake value to controller addresses 0-5**: the
+  `carreralib` library allows it (both `setspeed()` and `setbrake()`
+  place no restriction beyond the protocol's own 0-7 address range), but
+  whether the CU firmware actually honors an external override for a slot
+  with a live physical/wireless controller attached -- versus the real
+  controller's own input winning, or the two fighting each other -- is
+  unconfirmed. Confirmed-safe targets for software speed control are the
+  autonomous car (6) and pace car (7) addresses. `carreralib` also exposes
+  an `ignore(mask)` command (an 8-bit bitmask telling the CU to ignore
+  certain controllers' own input entirely) that, per its docstring, may be
+  the actual mechanism for cleanly handing an address to app control
+  without a fight -- not yet used by this app, and not independently
+  confirmed either; worth testing alongside the write-guard override.
 - **Jump-start / early-movement detection**: the CU's own Status/Timer
   messages don't expose a live per-car throttle field, so this app can
   only detect it from (a) a locally-attached controller's own raw input,

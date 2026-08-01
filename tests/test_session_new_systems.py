@@ -38,18 +38,53 @@ def test_strategy_sets_starting_fuel_and_compound():
     assert session.fuel.compound(0) == TyreCompound.SOFT
 
 
-def test_pit_entry_triggers_tyre_change_event_and_reset():
+def test_pit_entry_arms_tyre_change_but_only_fires_once_refuel_completes():
     session, cu, clock = make_session()
+    p0 = WebController("p0")
+    session.assign_controller(0, p0)
+    session.go()
+    p0.push(ControllerInput(throttle=1.0, brake=1.0))
     for _ in range(50):
-        session.fuel.update(0, throttle=1.0, brake=1.0, dt=0.1)
+        clock.advance(0.1)
+        session.tick()
     assert session.fuel.tyre_wear(0) > 0
+    session.fuel.set_starting_load(0, 50.0)  # drain it down so refuel takes real time
 
     session.set_in_pit(0, True)
+    session.tick()
+    # Entering the pit arms the change but doesn't fire it immediately --
+    # the tank isn't full yet.
+    assert session.fuel.tyre_wear(0) > 0
+    assert not any(e["type"] == "tyre_change" for e in session.events)
+
+    for _ in range(50):  # long enough for pit_refuel_rate to top off the tank
+        clock.advance(0.5)
+        session.tick()
+    assert session.fuel.fuel(0) == 100.0
     assert session.fuel.tyre_wear(0) == 0.0
-    assert any(e["type"] == "tyre_change" for e in session.events)
 
 
-def test_fuel_never_refills_even_while_in_pit_across_ticks():
+def test_leaving_pit_before_refuel_completes_cancels_the_tyre_change():
+    session, cu, clock = make_session()
+    p0 = WebController("p0")
+    session.assign_controller(0, p0)
+    session.go()
+    p0.push(ControllerInput(throttle=1.0, brake=1.0))
+    for _ in range(50):
+        clock.advance(0.1)
+        session.tick()
+    session.fuel.set_starting_load(0, 10.0)
+    wear_before = session.fuel.tyre_wear(0)
+    assert wear_before > 0
+
+    session.set_in_pit(0, True)
+    session.tick()  # one tick of partial refuel, tank still not full
+    assert session.fuel.fuel(0) < 100.0
+    session.set_in_pit(0, False)  # splash-and-go, left before it topped off
+    assert session.fuel.tyre_wear(0) == wear_before  # no free tyre change
+
+
+def test_fuel_refills_while_in_pit_and_never_regenerates_while_driving():
     session, cu, clock = make_session()
     p0 = WebController("p0")
     session.assign_controller(0, p0)
@@ -59,11 +94,13 @@ def test_fuel_never_refills_even_while_in_pit_across_ticks():
         clock.advance(0.2)
         session.tick()
     fuel_before_pit = session.engine.cars[0].fuel
+    assert fuel_before_pit < 100.0  # burned some while driving
+
     session.set_in_pit(0, True)
     for _ in range(20):
         clock.advance(0.2)
         session.tick()
-    assert session.engine.cars[0].fuel <= fuel_before_pit
+    assert session.engine.cars[0].fuel > fuel_before_pit  # refuelling raises it
 
 
 def test_overtake_button_activates_boost_and_logs_event():

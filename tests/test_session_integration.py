@@ -104,6 +104,49 @@ def test_go_with_press_cu_start_false_does_not_press_the_button():
     # already pressed it themselves, so go() must not press it again.
 
 
+def _make_fake_real_cu(pit: tuple[bool, ...], mode: int):
+    from app.cu.base import CUClient
+    from app.cu.protocol import Status
+
+    class FakeRealCU(CUClient):
+        def describe(self): return "REAL (fake, test stub)"
+        def connect(self): pass
+        def disconnect(self): pass
+        def read_status(self): return Status(fuel=(15,) * len(pit), pit=pit, start=0, mode=mode, display=len(pit))
+        def poll_timer(self): return []
+        def set_speed(self, address, value): pass
+        def set_brake(self, address, value): pass
+        def set_fuel_display(self, address, value): pass
+        def start(self): pass
+
+    return FakeRealCU()
+
+
+def test_real_backend_syncs_pit_from_cu_when_pit_lane_mode_present():
+    from app.cu.protocol import PIT_LANE_MODE
+
+    cu = _make_fake_real_cu(pit=(True,), mode=PIT_LANE_MODE)
+    session = RaceSession(cu, SessionConfig(addresses=[0]), clock=_FakeClock())
+    session.tick()
+    assert session.engine.cars[0].in_pit is True
+
+
+def test_real_backend_does_not_trust_pit_without_pit_lane_mode_bit():
+    # mode=0 -- CU is reporting no pit-lane adapter connected, so pit[]
+    # (even though it says True here) shouldn't be trusted/synced.
+    cu = _make_fake_real_cu(pit=(True,), mode=0)
+    session = RaceSession(cu, SessionConfig(addresses=[0]), clock=_FakeClock())
+    session.tick()
+    assert session.engine.cars[0].in_pit is False
+
+
+def test_mock_backend_never_auto_syncs_pit_manual_toggle_sticks():
+    session, cu = make_session(addresses=(0,))
+    session.set_in_pit(0, True)
+    session.tick()  # would stomp the manual toggle if mock were auto-synced
+    assert session.engine.cars[0].in_pit is True
+
+
 def test_early_movement_during_countdown_flags_jump_start():
     session, cu = make_session(addresses=(0,))
     clock: _FakeClock = session.clock

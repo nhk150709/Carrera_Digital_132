@@ -14,6 +14,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+# Status.mode bit flags (confirmed from carreralib.cu.ControlUnit.Status).
+# PIT_LANE_MODE in particular matters beyond just decoding the bitmask for
+# display: it tells you whether a physical pit-lane adapter is actually
+# connected at all, i.e. whether Status.pit[] means anything -- see
+# RaceSession._sync_pit_from_cu(), which only trusts pit[] when this bit
+# is set rather than blindly syncing an all-False/meaningless array.
+FUEL_MODE = 0x1
+REAL_MODE = 0x2
+PIT_LANE_MODE = 0x4
+LAP_COUNTER_MODE = 0x8
+
 
 @dataclass
 class Status:

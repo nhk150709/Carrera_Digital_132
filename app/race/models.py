@@ -60,6 +60,7 @@ class CarState:
     fuel: float = 100.0
     tyre_wear: float = 0.0
     in_pit: bool = False
+    pending_tyre_change: bool = False  # armed on pit entry, resolved once refuel completes
 
     laps: list[LapRecord] = field(default_factory=list)
     penalties: list[PenaltyRecord] = field(default_factory=list)

@@ -1,19 +1,30 @@
 """Fuel + tyre resource model.
 
 Design, per explicit request:
-- Fuel is never rechargeable mid-race (no pit refuel). The only strategic
-  fuel choice is how much to *start* with (fuel load), chosen pre-race.
-  More starting fuel = more range but a heavier car (weight penalty
-  reduces effective speed while that fuel is still on board -- burns off
-  as the tank empties, so a heavy full-tank car gets faster over a stint,
-  same trade-off real endurance racing has).
-- Tyres are the only pit-serviceable resource: heavy braking wears them,
-  heavy acceleration burns fuel. Worn tyres don't just change fuel drain
-  rate anymore -- they meaningfully cut top speed and braking
-  effectiveness (see performance_multiplier/brake_multiplier below), so a
-  driver has a real reason to pit even with fuel to spare.
+- A pre-race fuel *load* choice still exists (more starting fuel = more
+  range but a heavier car; weight penalty reduces effective speed while
+  that fuel is still on board, burning off as the tank empties -- same
+  trade-off real endurance racing has). Fuel also refuels during a pit
+  stop now (refuel_tick(), while car.in_pit): it rises toward a full tank
+  over time rather than instantly, so a splash-and-go (leaving before
+  it's full) is a real strategic option.
+- Tyres are only changed once a pit stop's refuel actually completes
+  (is_full() -> change_tyres(), see RaceSession.tick()), not on pit
+  entry -- leaving early means fuel *and* worn tyres. Heavy braking wears
+  tyres, heavy acceleration burns fuel; worn tyres meaningfully cut top
+  speed and braking effectiveness (see performance_multiplier/
+  brake_multiplier below), so a driver has a real reason to pit even with
+  fuel to spare.
 - Tyre compounds trade peak grip for wear rate (soft = faster but wears
   quicker; hard = slower but lasts).
+- IMPORTANT HONESTY NOTE: this entire model (fuel drain, tyre wear,
+  refuel, tyre change) only reflects reality for cars actually driven
+  *through this app* (its own throttle/brake input) -- a real Carrera car
+  driven by its own physical hand controller gives this app no throttle/
+  brake signal at all (unreadable over the CU protocol, confirmed), so
+  none of this simulation ever runs for it. See state_view.py's
+  cu_fuel_pct field for the one number that *is* real regardless: the
+  CU's own fuel[] reading.
 """
 from __future__ import annotations
 
@@ -76,7 +87,7 @@ class FuelConfig:
     tyre_wear_cap: float = 100.0
     accel_wear_per_second: float = 0.9
     brake_wear_per_second: float = 0.6
-    pit_tyre_change_rate: float = 60.0  # tyre_wear units removed per second in pit
+    pit_refuel_rate: float = 20.0  # fuel units/second added while in the pit
 
     # Weight penalty: a full tank costs this much of the speed multiplier;
     # it burns off linearly as fuel is consumed (0 penalty at empty).
@@ -118,24 +129,45 @@ class FuelModel:
         self._compound[address] = compound
 
     def change_tyres(self, address: int) -> None:
-        """Instant tyre change -- call once, e.g. on pit entry, rather than
-        every tick (unlike the old drip-refuel model, a tyre change is a
-        discrete pit-stop event, not a continuous-while-in-pit effect)."""
+        """Instant tyre change -- call once the pit stop has actually
+        completed a full refuel (see refuel_tick()/is_full() and
+        RaceSession.tick()), not on pit entry -- a discrete event, not a
+        continuous-while-in-pit effect."""
         self._tyre_wear[address] = 0.0
+
+    def refuel_tick(self, address: int, dt: float) -> None:
+        """Advance a pit-stop refuel by dt seconds -- call instead of
+        update() while the car is actually in the pit (car.in_pit), not
+        alongside it: a car in the pit box is being fuelled, not driven.
+        Fuel rises toward a full tank; call is_full() to know when to
+        trigger the tyre change."""
+        self._fuel[address] = min(self.config.fuel_capacity,
+                                    self._fuel[address] + self.config.pit_refuel_rate * dt)
+
+    def is_full(self, address: int) -> bool:
+        return self._fuel[address] >= self.config.fuel_capacity
 
     def update(self, address: int, throttle: float, brake: float, dt: float,
                 boosting: bool = False) -> None:
-        """Advance simulation for one car by dt seconds. No `in_pit`
-        parameter anymore -- fuel never regenerates, and tyre wear only
-        resets via the explicit change_tyres() event. `boosting` applies
-        the push-to-pass fuel/wear cost multipliers."""
+        """Advance simulation for one car by dt seconds while actually
+        being driven. No `in_pit` parameter -- call refuel_tick() instead
+        of this while car.in_pit is True (see RaceSession.tick()).
+        `boosting` applies the push-to-pass fuel/wear cost multipliers."""
         throttle = max(0.0, min(1.0, throttle))
         brake = max(0.0, min(1.0, brake))
         cfg = self.config
         compound = COMPOUND_PROFILES[self._compound[address]]
 
-        drain = cfg.base_drain_per_second
-        drain += (throttle ** cfg.throttle_drain_exponent) * cfg.base_drain_per_second * 2
+        # No drain at all while the car isn't being driven -- base_drain_
+        # per_second is a floor that applies once *any* throttle is
+        # applied (driving at all costs something beyond pure throttle
+        # scaling), not a constant idle cost. It used to apply
+        # unconditionally, which meant fuel quietly drained to empty over
+        # a long-running idle session even with the car never touched --
+        # confirmed as a real bug from an actual multi-hour session.
+        drain = 0.0 if throttle <= 0.0 else (
+            cfg.base_drain_per_second + (throttle ** cfg.throttle_drain_exponent) * cfg.base_drain_per_second * 2
+        )
         if boosting:
             drain *= cfg.boost_fuel_multiplier
         self._fuel[address] = max(0.0, self._fuel[address] - drain * dt)

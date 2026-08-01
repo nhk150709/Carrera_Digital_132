@@ -14,8 +14,22 @@ def test_fuel_never_regenerates():
     model.set_starting_load(0, 50.0)
     for _ in range(100):
         model.update(0, throttle=0.0, brake=0.0, dt=1.0)
-    # idle drain still applies, and nothing should ever raise it back up
+    # never touched -- nothing should ever raise it, and zero throttle
+    # means zero drain too (a car nobody is driving doesn't burn fuel;
+    # see test_zero_throttle_never_drains_fuel for the dedicated check)
     assert model.fuel(0) <= 50.0
+
+
+def test_zero_throttle_never_drains_fuel():
+    """Regression test: base_drain_per_second used to apply unconditionally
+    every tick regardless of throttle, so fuel quietly drained to empty
+    over a long-running idle session even with the car never touched --
+    confirmed as a real bug from an actual multi-hour session on real
+    hardware."""
+    model = FuelModel([0])
+    for _ in range(1000):
+        model.update(0, throttle=0.0, brake=0.0, dt=1.0)
+    assert model.fuel(0) == 100.0
 
 
 def test_change_tyres_is_a_discrete_event_not_continuous():
