@@ -87,16 +87,44 @@ tr.pit-active td { background: #3a2f0d; }
 
 .kv { font-size: 0.85rem; margin: 0.25rem 0; }
 
-#raw-log, #timer-panel table {
+#raw-log, #command-log, #timer-panel table {
   max-height: 400px;
   overflow-y: auto;
   display: block;
 }
-#raw-log {
+#raw-log, #command-log {
   font-size: 0.72rem;
   color: var(--muted);
   white-space: pre-wrap;
   word-break: break-all;
 }
-#raw-log div { padding: 0.1rem 0; border-bottom: 1px solid #21262d; }
-#raw-log div:first-child { color: var(--text); }
+#raw-log div, #command-log div { padding: 0.1rem 0; border-bottom: 1px solid #21262d; }
+#raw-log div:first-child, #command-log div:first-child { color: var(--text); }
+
+h3 { font-size: 0.9rem; margin: 0.8rem 0 0.4rem 0; color: var(--text); }
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+.button-row label {
+  font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+input[type="number"] {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.15rem 0.3rem;
+  font-family: inherit;
+}
+
+.cmd-ok { color: var(--green); }
+.cmd-err { color: var(--red); }

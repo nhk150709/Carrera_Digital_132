@@ -12,7 +12,10 @@ Run/setup instructions: [`README.md`](README.md).
 ## The app (`app/`) — currently a CU monitor, not a race manager
 
 **As of the commit after `fce2d33`, this app was deliberately stripped
-down to a read-only Control Unit monitor.** Per explicit request, all
+down to a Control Unit monitor + manual command console** (initially
+read-only; manual write commands were added back shortly after per
+explicit request -- see "Manual CU commands" below. Still no automated
+driving/race-management loop of any kind). Per explicit request, all
 race-management functionality (lap timing/ranking, controller-to-car
 assignment, fuel/tyre simulation, strategy/weather/safety-car/overtake/
 reliability/ghost/qualifying, the Arduino peripheral bridge, the browser
@@ -34,26 +37,39 @@ What actually runs now:
   `CarreralibCUClient` wrapping the real `carreralib` package. Unchanged
   by the strip-down; this layer has no race-manager knowledge and never
   did.
-- `app/network/server.py` — a minimal FastAPI app: connects to the CU
-  (mock or real, same `CARRERA_RMS_CU_DEVICE` env var contract as
-  before), polls it continuously (`MonitorState.poll_once()`, ~20Hz),
-  and broadcasts a live snapshot over one WebSocket (`/ws`) to every
-  connected browser: decoded `Status` (fuel[]/pit[]/start/mode/display,
-  mode bitmask decoded), a rolling log of decoded `Timer` events, and a
-  rolling **raw wire-level log** captured from carreralib's own DEBUG
-  logging (`carreralib.cu`/`carreralib.ble`/`carreralib.connection`/
-  `carreralib.serial` loggers, via `RawLogHandler`) — actual raw
-  send/receive bytes over serial, or raw BLE notification payloads, not
-  a paraphrase. `/api/state` (REST snapshot) and `/api/reconnect` (manual
-  retry) exist alongside the WebSocket. No POST endpoint writes anything
-  to the CU — this app never commands speed/brake/fuel/start on this CU,
-  by design, since it's a monitor.
+- `app/network/server.py` — a FastAPI app: connects to the CU (mock or
+  real, same `CARRERA_RMS_CU_DEVICE` env var contract as before), polls
+  it continuously (`MonitorState.poll_once()`, ~20Hz), and broadcasts a
+  live snapshot over one WebSocket (`/ws`) to every connected browser:
+  decoded `Status` (fuel[]/pit[]/start/mode/display, mode bitmask
+  decoded, `start` labeled with its now-CONFIRMED meaning -- see below),
+  a rolling log of decoded `Timer` events, a rolling **raw wire-level
+  log** captured from carreralib's own DEBUG logging (`carreralib.cu`/
+  `carreralib.ble`/`carreralib.connection`/`carreralib.serial` loggers,
+  via `RawLogHandler`) — actual raw send/receive bytes over serial, or
+  raw BLE notification payloads, not a paraphrase — and a rolling
+  **command log** of every manual write attempt and whether it
+  succeeded/was rejected. `/api/state` (REST snapshot) and
+  `/api/reconnect` (manual retry) exist alongside the WebSocket. **Manual
+  CU commands**: one POST endpoint per `CUClient` write method
+  (`/api/cu/speed`, `/api/cu/brake`, `/api/cu/fuel`, `/api/cu/press`,
+  `/api/cu/ignore`, `/api/cu/reset`, `/api/cu/position`, `/api/cu/lap`,
+  `/api/cu/clear_position`) -- each fires exactly once, exactly when a
+  human clicks the corresponding button in the UI; nothing calls any of
+  them automatically. This is the mechanism for testing the open
+  questions empirically (does a speed/brake write actually affect a
+  live-controller address? does `ignore()` work? does `PACE CAR/ESC`
+  change any status field?) -- see `MonitorState.run_write()`.
 - `app/static/` — one plain HTML/CSS/JS page (`index.html` +
   `monitor.js` + `style.css`) rendering that snapshot live: a big
-  connected/disconnected/mock badge, backend identity, a fuel/pit table
-  per address, start/mode/display, a Timer event log, and the raw byte
-  stream. No controller assignment, no race controls, no simulation of
-  any kind.
+  connected/disconnected/mock badge, backend identity, whether
+  controller-address (0-5) writes are currently allowed, a fuel/pit
+  table per address, start (raw + confirmed label)/mode/display, a Timer
+  event log, a manual-command panel (per-address speed/brake/fuel
+  inputs, one button per CU button ID, an ignore-mask checklist, CU
+  reset + Position Tower controls), a command log, and the raw byte
+  stream. Still no controller-to-car assignment, no race controls, no
+  automated driving/simulation of any kind.
 
 Removed entirely (recoverable from git history at or before `fce2d33`):
 `app/race/` (all race logic), `app/controllers/` (gamepad/browser player
@@ -97,36 +113,63 @@ pages on this point):
   becomes an unrecorded baseline, and only crossings *within the same
   reported domain* are ever subtracted from each other. Keep this
   invariant if touching engine.py — don't reintroduce clock mixing.
-- The CU's `start` status field is a **0-9 state code** for its own
-  built-in start-light sequence. Real firmware semantics per value are
-  still **not confirmed** (carreralib's own docs just say "0..9 start
-  light indicator"). The monitor just displays the raw value live; the
-  removed race manager's GO-button-sync heuristic that interpreted it is
-  documented in the "Race manager" section below.
-- `press(PACE_CAR_ESC_BUTTON_ID)` simulates the CU's own Pace Car/ESC
-  button; `setpos()`/`setlap()`/`clrpos()` drive an official Carrera
-  **Position Tower** accessory, if one is ever added.
+- **The CU's `start` status field — CONFIRMED by directly watching it on
+  real hardware** (carreralib's own docs only say "0..9 start light
+  indicator" with no per-value meaning; this was empirically observed by
+  the user watching the monitor's raw value during real countdowns,
+  something the earlier GO-button-sync heuristic could only guess at):
+  `0` = **racing** (green light state -- also what pressing START/ENTER
+  returns to once the sequence finishes), `1` = **stopped**, `2..7` = the
+  light sequence stepping up after pressing START/ENTER while stopped (6
+  steps, presumably one per physical light stage), landing back on `0`
+  when it finishes. Values `8`/`9` have not been observed -- documented
+  range is 0..9, so they may be reachable under a condition not yet
+  tested (a false start? pace-car/safety-car mode? see below). This is
+  now encoded as `START_RACING`/`START_STOPPED`/`START_LIGHT_SEQUENCE`/
+  `START_LABELS`/`describe_start()` in `app/cu/protocol.py`, used by both
+  the monitor's UI and `MockCUClient`'s own simulated start/stop toggle
+  (`press(START_ENTER_BUTTON_ID)`).
+- **No dedicated safety-car / pace-car mode field exists anywhere in the
+  protocol.** The pace car is just address `7`, driven the same way as
+  any other address via `setspeed`/`setbrake` -- there's no separate
+  "safety car active" flag. `press(PACE_CAR_ESC_BUTTON_ID)` simulates the
+  CU's own Pace Car/ESC button, but whether it changes any status field
+  at all (a new, still-unobserved `start` value? a `mode` bit beyond the
+  4 documented ones? nothing?) is an **open empirical question** -- the
+  monitor's "Buttons" panel makes it easy to press it and watch
+  `start`/`mode`/`display` for any change, which is the only way to find
+  out (the response format has a fixed shape -- 8 fuel bytes + start +
+  mode + pitmask + display -- confirmed from the wire protocol itself, so
+  there is no hidden extra field being sent that a smarter decoder could
+  extract; if pace-car mode is signaled at all, it's through one of these
+  same fields taking on a value not yet catalogued).
 - **Full audit of everything `carreralib.cu.ControlUnit` exposes** (done
   by reading its entire source, not just the parts this app already
   used), in response to "is that all the information available, and what
-  else can be inferred":
+  else can be inferred". Every one of these is now reachable from the
+  monitor's manual-command panel (`app/cu/base.py`'s `CUClient` interface
+  + `/api/cu/*` endpoints in `app/network/server.py`), specifically so
+  they can be tried and observed rather than just reasoned about:
   - `ignore(mask)` — an 8-bit bitmask write command telling the CU to
     ignore the listed controller addresses' own physical/wireless input
-    entirely. **Not yet used anywhere in this app, and not independently
-    confirmed against real hardware** — but if it does what its one-line
-    docstring says, it's the actual mechanism for cleanly handing an
-    address over to app-driven control (`set_speed`/`set_brake`) without
-    fighting a live driver's real controller, rather than just racing
-    against it. Worth testing before relying on it for anything.
-  - `reset()` — resets the CU's own internal timer. Not currently called
-    by this app.
-  - Button IDs beyond the two already used (`START_ENTER_BUTTON_ID`,
-    `PACE_CAR_ESC_BUTTON_ID`): `SPEED_BUTTON_ID`, `BRAKE_BUTTON_ID`,
-    `FUEL_BUTTON_ID`, `CODE_BUTTON_ID` — these simulate pressing the
-    CU's own physical SPEED/BRAKE/FUEL/CODE buttons (global handicap
-    levels, fuel-mode toggle, and wireless-controller pairing mode,
-    respectively, based on what those buttons do on the real hardware —
-    not independently confirmed via this library). Not used by this app.
+    entirely. **Not independently confirmed against real hardware** —
+    but if it does what its one-line docstring says, it's the actual
+    mechanism for cleanly handing an address over to app-driven control
+    (`set_speed`/`set_brake`) without fighting a live driver's real
+    controller, rather than just racing against it.
+  - `reset()` — resets the CU's own internal timer.
+  - `setpos()`/`setlap()`/`clrpos()` (`set_position`/`set_lap`/
+    `clear_position` on `CUClient`) drive an official Carrera **Position
+    Tower** accessory, if one is ever attached — no observable effect
+    without one.
+  - Button IDs beyond `START_ENTER_BUTTON_ID` (confirmed effect on
+    `start`, see above) and `PACE_CAR_ESC_BUTTON_ID` (effect unconfirmed,
+    see above): `SPEED_BUTTON_ID`, `BRAKE_BUTTON_ID`, `FUEL_BUTTON_ID`,
+    `CODE_BUTTON_ID` — these simulate pressing the CU's own physical
+    SPEED/BRAKE/FUEL/CODE buttons (global handicap levels, fuel-mode
+    toggle, and wireless-controller pairing mode, respectively, based on
+    what those buttons do on the real hardware — not independently
+    confirmed via this library).
   - **`Status.mode`'s bits aren't just informational** — `PIT_LANE_MODE`
     (`0x4`) specifically indicates whether a physical pit-lane adapter is
     even connected, i.e. whether `pit[]` means anything at all, versus
@@ -137,11 +180,16 @@ pages on this point):
     documented below.
   - Nothing beyond `fuel[]`/`pit[]`/`Timer`/`start`/`mode`/`display`
     exists in the protocol at all — confirmed by reading every method on
-    `ControlUnit`, not just the docstring table. In particular there is
-    still no live throttle/brake/speed readback for a physically-driven
-    car anywhere in the library, and no tyre-wear concept of any kind —
-    both remain permanently unconfirmable/nonexistent by design, not
-    just unimplemented.
+    `ControlUnit`, not just the docstring table, and structurally
+    confirmed from the wire format itself (`poll()`'s Status response is
+    unpacked as exactly `2x 8Y Y Y B Y C` -- 8 fuel bytes, start, mode,
+    pitmask, display, checksum, no room for anything else). In particular
+    there is still no live throttle/brake/speed readback for a
+    physically-driven car anywhere in the protocol, and no tyre-wear
+    concept of any kind — both remain permanently unconfirmable/
+    nonexistent by design, not just unimplemented. The only way to verify
+    a speed/brake/fuel write did anything is to physically watch the
+    car/track, never this app.
 
 ## Race manager (removed — logic preserved here for reintegration)
 
@@ -329,9 +377,15 @@ specifically so the caller that already pressed it wouldn't double-press
 when finalizing the state transition, since a double-press could
 pause/re-trigger the CU if the button toggles) instead of running an
 independent software 5-light countdown, then treated the first return to
-`0` after a nonzero `start` value as "green" -- an explicitly-labeled,
-unconfirmed heuristic, with a 20s timeout fallback (needed for the mock
-CU, whose `start` is always 0 and would otherwise never trigger the
+`0` after a nonzero `start` value as "green" -- at the time an
+explicitly-labeled, unconfirmed heuristic, with a 20s timeout fallback
+(needed for the mock CU, whose `start` is always 0 and would otherwise
+never trigger the transition). **This heuristic has since been confirmed
+correct** by direct observation on real hardware -- see the `start`
+field bullet in "Key facts" above (`0`=racing, `1`=stopped, `2..7`=light
+sequence) -- so a rebuild can drop the "unconfirmed" hedge and the
+timeout-fallback-for-safety framing, though the timeout itself should
+stay (still needed for the mock, and as a safety net against a missed
 transition).
 
 **Stop/resume also commanded the CU**: `RaceSession.stop()`/`resume()`

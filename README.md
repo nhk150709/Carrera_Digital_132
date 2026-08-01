@@ -6,27 +6,31 @@ serial/BLE protocol. See [`CLAUDE.md`](CLAUDE.md) for the full project
 brief and [`docs/reference/`](docs/reference/README.md) for the protocol
 research this is built on.
 
-## The app (`app/`) — a read-only CU monitor
+## The app (`app/`) — a CU monitor + manual command console
 
-**This app currently does one thing: connect to the Control Unit and show
-everything it reports, live, with nothing else attached.** No race
-management, no lap timing/ranking, no controller-to-car assignment, no
-fuel/tyre simulation -- that layer existed in an earlier version of this
+**This app connects to the Control Unit, shows everything it reports
+live, and lets you manually trigger any write the protocol supports so
+you can see what happens.** No race management, no lap timing/ranking,
+no controller-to-car assignment, no fuel/tyre simulation, no automated
+driving of any kind -- that layer existed in an earlier version of this
 app and was deliberately stripped out (its design is fully preserved in
 [`CLAUDE.md`](CLAUDE.md)'s "Race manager" section for reintegration
 later; the code itself is recoverable from git history). What's here now:
 
+**Monitoring:**
 - talks to the CU over serial or BLE (via `carreralib`) for real
   hardware, or a built-in simulator (`MockCUClient`) so it's usable with
   no track connected;
 - a big, impossible-to-miss connection badge: **MOCK** (yellow, no real
   hardware), **CONNECTED** (green), or **DISCONNECTED** (red) -- plus the
-  exact backend identity (which device/address) and a running connect-
+  exact backend identity (which device/address), whether controller-
+  address (0-5) writes are currently allowed, and a running connect-
   attempt counter, so it's never ambiguous whether you're looking at
   simulated or real data, or whether the connection actually dropped;
 - decodes and shows every `Status` field live: `fuel[8]` (0-15 raw and
-  as %), `pit[8]`, `start` (0-9 raw), `mode` (bitmask, decoded into
-  `FUEL_MODE`/`REAL_MODE`/`PIT_LANE_MODE`/`LAP_COUNTER_MODE`), `display`;
+  as %), `pit[8]`, `start` (0-9 raw **and its confirmed meaning** -- see
+  below), `mode` (bitmask, decoded into `FUEL_MODE`/`REAL_MODE`/
+  `PIT_LANE_MODE`/`LAP_COUNTER_MODE`), `display`;
 - a scrolling log of every `Timer` event (lap/sector crossing) as it
   arrives -- address, sector (translated to "start/finish" or "check
   lane N"), wall-clock time, and the CU's own raw timestamp;
@@ -35,11 +39,39 @@ later; the code itself is recoverable from git history). What's here now:
   notification payloads, captured instead of only printed -- the actual
   data stream, not a paraphrase (empty against the mock backend, since
   nothing goes over a wire there);
-- one manual "Reconnect" button/endpoint (`POST /api/reconnect`); the
-  poll loop also retries on its own every 5s if the connection drops.
+- a scrolling **command log**: every manual write below, logged with
+  whether it succeeded or was rejected and why.
 
-That's the entire feature set. No endpoint writes anything to the CU
-(no speed/brake/fuel/start commands) -- this is deliberately read-only.
+**Manual commands** (one-shot -- each fires exactly once, exactly when
+you click it; nothing runs automatically):
+- per-address **speed**, **brake**, and **fuel-override** (0-15 each) --
+  the direct way to test whether writing to a controller address (0-5)
+  actually affects a car with a live physical controller plugged in, vs.
+  the real controller just winning (addresses 6/7 -- autonomous/pace car
+  -- are always allowed; 0-5 need `CARRERA_RMS_CU_ALLOW_CONTROLLER_
+  WRITES=1`, see below);
+- one button per CU **button ID** (START/ENTER, PACE CAR/ESC, SPEED,
+  BRAKE, FUEL, CODE);
+- **ignore(mask)** -- an 8-bit checklist telling the CU to ignore chosen
+  controllers' own input entirely (unconfirmed against real hardware);
+- **reset()** (CU's own internal timer) and Position Tower controls
+  (`set_position`/`set_lap`/`clear_position`, no observable effect
+  without that accessory attached).
+
+There is **no readback for speed/brake/throttle anywhere in the
+protocol** -- confirmed structurally, not just by omission: the CU's
+`poll()` response has a fixed shape (8 fuel bytes + start + mode + pit +
+display + checksum) with no room for one. The only way to confirm a
+speed/brake write did anything is to watch the physical car/track, never
+this page.
+
+**Confirmed from real hardware**: the `start` field (0-9) -- `0` =
+racing, `1` = stopped, `2..7` = the light sequence stepping up after
+START/ENTER is pressed while stopped, back to `0` when it finishes. `8`/
+`9` not yet observed. There is **no dedicated safety-car/pace-car mode
+field** anywhere in the protocol; if pressing PACE CAR/ESC does anything
+observable, it would show up as a change to `start`/`mode`/`display`,
+which is exactly what the monitor is for watching.
 
 ### Run it
 
@@ -68,9 +100,10 @@ manual activation, restarts itself if it crashes), see
 
 Open `http://<pi-address>:8000/` from any device on the network. By
 default it runs against the built-in mock CU (fuel/pit for 6 simulated
-addresses, no Timer events since nothing ever presses the mock's own
-start) so the page itself is checkable with no track connected -- the
-badge will clearly say **MOCK** the whole time.
+addresses, starts "stopped" -- press the START/ENTER button in the
+manual-command panel to see it flip to "racing" and start producing
+Timer events) so the whole page is checkable with no track connected --
+the badge will clearly say **MOCK** the whole time.
 
 ### Easiest way to run it (recommended for regular use/debugging)
 
@@ -147,6 +180,19 @@ print(cu.version())
 "
 ```
 
+**Testing controller-address (0-5) speed/brake writes.** Blocked by
+default -- `set_speed`/`set_brake` to addresses 0-5 raise (and log to the
+command log) instead of silently sending a command that may be ignored
+by the hardware. Set `CARRERA_RMS_CU_ALLOW_CONTROLLER_WRITES=1` to try it
+anyway once you're ready to test that specifically:
+
+```bash
+CARRERA_RMS_CU_ALLOW_CONTROLLER_WRITES=1 CARRERA_RMS_CU_DEVICE=auto ./run.sh
+```
+
+Addresses 6 (autonomous) and 7 (pace car) are always allowed regardless,
+since there's no physical controller to fight there.
+
 ### Run the tests
 
 ```bash
@@ -154,10 +200,12 @@ pip install -r requirements.txt
 pytest
 ```
 
-`app/cu/mock_client.py`, `app/cu/protocol.py`, and the monitor server's
-own logic (`MonitorState`, mode-bitmask decoding, the raw log handler,
-its REST/WebSocket endpoints) are unit/integration tested without any
-hardware. `app/cu/carreralib_client.py`'s actual hardware I/O is
+`app/cu/mock_client.py` (including its simulated start/stop toggle),
+`app/cu/protocol.py` (`describe_start()` and the confirmed value mapping),
+and the monitor server's own logic (`MonitorState`, mode-bitmask decoding,
+the raw log handler, `run_write()`'s success/rejection/exception paths,
+and every `/api/cu/*` write endpoint) are unit/integration tested without
+any hardware. `app/cu/carreralib_client.py`'s actual hardware I/O is
 untestable in this environment by definition -- only its address-write
 guard logic and connection-retry logic are covered.
 
@@ -169,23 +217,27 @@ guard logic and connection-retry logic are covered.
   whether the CU firmware actually honors an external override for a slot
   with a live physical/wireless controller attached -- versus the real
   controller's own input winning, or the two fighting each other -- is
-  unconfirmed. `carreralib` also exposes an `ignore(mask)` command (an
-  8-bit bitmask telling the CU to ignore certain controllers' own input
-  entirely) that, per its docstring, may be the actual mechanism for
-  cleanly handing an address to external control without a fight -- not
-  independently confirmed either. This monitor doesn't write anything to
-  the CU at all, so neither is exercised by the current app; both are
-  relevant again once/if the write-driving layer (pace car, race manager)
-  comes back.
-- **The CU's `start` field (0-9)**: only documented as "start light
-  indicator" with no per-value meaning -- the monitor just shows the raw
-  number live. Watching it during a real countdown (now easy, since it's
-  right there on the page) is exactly how to figure out what the values
-  actually mean.
+  unconfirmed. Test it from the monitor's manual-command panel (see
+  above, needs `CARRERA_RMS_CU_ALLOW_CONTROLLER_WRITES=1`) while someone
+  actually holds that address's controller, and watch the physical car.
+- **`ignore(mask)`**: an 8-bit bitmask telling the CU to ignore certain
+  controllers' own input entirely -- per its docstring, may be the actual
+  mechanism for cleanly handing an address to external control without a
+  fight. Not independently confirmed. Also reachable from the manual-
+  command panel.
+- **Whether PACE CAR/ESC (or any other button) changes anything
+  observable**: there's no dedicated safety-car/pace-car status field in
+  the protocol at all. Press it from the "Buttons" panel and watch
+  `start`/`mode`/`display` for any change -- that's the only way to find
+  out, and nothing has confirmed an effect yet.
 - **`Status.mode`'s `PIT_LANE_MODE` bit**: indicates whether a physical
   pit-lane adapter is even connected, i.e. whether `pit[]` means
   anything at all -- decoded and shown, not yet validated against an
   actual adapter.
+- **`start` values 8/9**: documented range is 0..9, but only 0-7 have
+  been observed so far (0=racing, 1=stopped, 2-7=light sequence -- see
+  above). Whether 8/9 are reachable at all, and under what condition, is
+  unknown.
 
 See [`CLAUDE.md`](CLAUDE.md)'s "Race manager" section for the additional
 open questions that only mattered for the now-removed race-management

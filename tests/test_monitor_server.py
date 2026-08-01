@@ -4,13 +4,15 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.network.server as server_module
-from app.cu.base import CUClient
+from app.cu.base import CUClient, UnsupportedCommand
 from app.cu.mock_client import MockCUClient
 from app.cu.protocol import (
     FUEL_MODE,
     LAP_COUNTER_MODE,
+    PACE_CAR_ESC_BUTTON_ID,
     PIT_LANE_MODE,
     REAL_MODE,
+    START_ENTER_BUTTON_ID,
     Status,
     TimerEvent,
 )
@@ -61,12 +63,15 @@ def test_raw_log_handler_is_bounded():
 class FakeCU(CUClient):
     """Scriptable CU stub for MonitorState tests."""
 
-    def __init__(self, timer_events=None, status=None, fail_poll=False, fail_connect=False):
+    def __init__(self, timer_events=None, status=None, fail_poll=False, fail_connect=False,
+                 raise_on_write: Exception | None = None):
         self._timer_events = timer_events or []
         self._status = status
         self.fail_poll = fail_poll
         self.fail_connect = fail_connect
+        self.raise_on_write = raise_on_write
         self.connect_calls = 0
+        self.calls: list[tuple] = []  # records every write call for assertions
 
     def describe(self): return "FAKE (test stub)"
 
@@ -88,22 +93,31 @@ class FakeCU(CUClient):
         events, self._timer_events = self._timer_events, []
         return events
 
-    def set_speed(self, address, value): pass
-    def set_brake(self, address, value): pass
-    def set_fuel_display(self, address, value): pass
-    def start(self): pass
+    def _record(self, name, *args):
+        self.calls.append((name, *args))
+        if self.raise_on_write is not None:
+            raise self.raise_on_write
+
+    def set_speed(self, address, value): self._record("set_speed", address, value)
+    def set_brake(self, address, value): self._record("set_brake", address, value)
+    def set_fuel_display(self, address, value): self._record("set_fuel_display", address, value)
+    def press(self, button_id): self._record("press", button_id)
+    def ignore(self, mask): self._record("ignore", mask)
+    def reset(self): self._record("reset")
+    def set_position(self, address, position): self._record("set_position", address, position)
+    def set_lap(self, value): self._record("set_lap", value)
+    def clear_position(self): pass
+    def version(self): return "fake-1.0"
 
 
 def make_state(cu: CUClient) -> server_module.MonitorState:
-    state = server_module.MonitorState.__new__(server_module.MonitorState)
+    # Real __init__ (not __new__ + hand-copied fields) so this test helper
+    # can't quietly drift out of sync with MonitorState's actual attributes
+    # -- it already has once (missing command_log after that field was
+    # added). build_cu_client() runs but nothing calls connect() here.
+    state = server_module.MonitorState()
     state.cu = cu
     state.requested_device = "test"
-    state.connected = False
-    state.last_error = None
-    state.last_status = None
-    state.timer_log = __import__("collections").deque(maxlen=10)
-    state.connect_attempts = 0
-    state._last_connect_attempt = 0.0
     return state
 
 
@@ -175,8 +189,49 @@ def test_snapshot_shape():
     snap = state.snapshot()
     assert set(snap.keys()) == {
         "backend", "requested_device", "connected", "last_error",
-        "connect_attempts", "status", "timer_log", "raw_log",
+        "connect_attempts", "controller_writes_allowed", "status",
+        "timer_log", "command_log", "raw_log",
     }
+
+
+def test_run_write_succeeds_and_logs_when_connected():
+    cu = FakeCU()
+    state = make_state(cu)
+    state.connected = True
+    result = state.run_write("press(button_id=2)", lambda: cu.press(START_ENTER_BUTTON_ID))
+    assert result == {"ok": True, "error": None}
+    assert cu.calls == [("press", START_ENTER_BUTTON_ID)]
+    assert state.command_log[0]["ok"] is True
+    assert state.command_log[0]["command"] == "press(button_id=2)"
+
+
+def test_run_write_rejected_when_not_connected_never_calls_cu():
+    cu = FakeCU()
+    state = make_state(cu)
+    state.connected = False
+    result = state.run_write("press(button_id=2)", lambda: cu.press(START_ENTER_BUTTON_ID))
+    assert result == {"ok": False, "error": "not connected"}
+    assert cu.calls == []  # never even attempted
+    assert state.command_log[0]["ok"] is False
+
+
+def test_run_write_catches_unsupported_command():
+    cu = FakeCU(raise_on_write=UnsupportedCommand("blocked: unconfirmed"))
+    state = make_state(cu)
+    state.connected = True
+    result = state.run_write("set_speed(address=0, value=10)", lambda: cu.set_speed(0, 10))
+    assert result["ok"] is False
+    assert "blocked: unconfirmed" in result["error"]
+    assert state.command_log[0]["error"] == "blocked: unconfirmed"
+
+
+def test_run_write_catches_generic_exception_without_crashing():
+    cu = FakeCU(raise_on_write=RuntimeError("BLE write failed"))
+    state = make_state(cu)
+    state.connected = True
+    result = state.run_write("reset()", cu.reset)
+    assert result["ok"] is False
+    assert "BLE write failed" in result["error"]
 
 
 def make_client() -> TestClient:
@@ -212,3 +267,30 @@ def test_websocket_sends_initial_snapshot():
             data = ws.receive_json()
             assert "backend" in data
             assert "connected" in data
+
+
+def test_cu_write_endpoints_against_mock_backend():
+    # The default test app runs the mock backend, which is always
+    # "connected" once try_connect() has run (triggered by lifespan on
+    # startup) -- so these exercise the full HTTP -> MonitorState.run_write
+    # -> CUClient path end to end, not just MonitorState in isolation.
+    with make_client() as client:
+        assert client.post("/api/cu/speed", json={"address": 6, "value": 8}).json()["ok"] is True
+        assert client.post("/api/cu/brake", json={"address": 6, "value": 4}).json()["ok"] is True
+        assert client.post("/api/cu/fuel", json={"address": 0, "value": 12}).json()["ok"] is True
+        assert client.post("/api/cu/press", json={"button_id": PACE_CAR_ESC_BUTTON_ID}).json()["ok"] is True
+        assert client.post("/api/cu/ignore", json={"mask": 0b00000001}).json()["ok"] is True
+        assert client.post("/api/cu/reset", json={}).json()["ok"] is True
+        assert client.post("/api/cu/position", json={"address": 0, "position": 1}).json()["ok"] is True
+        assert client.post("/api/cu/lap", json={"value": 3}).json()["ok"] is True
+        assert client.post("/api/cu/clear_position", json={}).json()["ok"] is True
+
+        state = client.get("/api/state").json()
+        assert len(state["command_log"]) == 9
+        assert state["command_log"][0]["command"] == "clear_position()"  # most recent first
+
+
+def test_cu_speed_endpoint_rejects_bad_body():
+    with make_client() as client:
+        resp = client.post("/api/cu/speed", json={"address": 0})  # missing "value"
+        assert resp.status_code == 422

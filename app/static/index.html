@@ -18,6 +18,7 @@
   <div><b>Requested device:</b> <span id="device-text">-</span></div>
   <div><b>CU connected:</b> <span id="cu-connected-text">-</span></div>
   <div><b>Connect attempts:</b> <span id="connect-attempts-text">-</span></div>
+  <div><b>Controller (0-5) speed/brake writes:</b> <span id="controller-writes-text">-</span></div>
   <div id="last-error-row"><b>Last error:</b> <span id="last-error-text">-</span></div>
 </section>
 
@@ -28,9 +29,19 @@
       <thead><tr><th>Addr</th><th>Fuel (0-15)</th><th>Fuel %</th><th>Pit</th></tr></thead>
       <tbody></tbody>
     </table>
-    <div class="kv"><b>start</b> (0-9, light sequence): <span id="start-value">-</span></div>
+    <div class="kv"><b>start</b>: <span id="start-value">-</span> -- <span id="start-label">-</span></div>
     <div class="kv"><b>mode</b>: <span id="mode-value">-</span></div>
     <div class="kv"><b>display</b>: <span id="display-value">-</span></div>
+    <p class="muted">
+      No dedicated "safety car" / "pace car mode" field exists anywhere in
+      the protocol -- the pace car is just address 7, driven the same way
+      as any other address (see Speed/Brake below), and PACE CAR/ESC (in
+      Buttons below) simulates the CU's own physical button for it. If
+      that button does put the CU into some distinct mode, it isn't a
+      separate status field -- watch <b>start</b>/<b>mode</b>/<b>display</b>
+      above for any change when you press it; that's the only way to find
+      out empirically.
+    </p>
   </section>
 
   <section id="timer-panel">
@@ -41,6 +52,54 @@
     </table>
   </section>
 </div>
+
+<section id="commands-panel">
+  <h2>Manual CU commands</h2>
+  <p class="muted">
+    Every one of these fires exactly once, exactly when you click it --
+    nothing here runs automatically. This is how to empirically test what
+    the CU protocol can and can't do: e.g. does a speed/brake write to a
+    controller address (0-5) actually affect a car with a live physical
+    controller plugged into that slot, or does the real controller just
+    win? <b>There is no readback for speed/brake/throttle anywhere in the
+    protocol</b> -- the CU's poll() response has a fixed shape (8 fuel
+    bytes + start + mode + pit + display, confirmed from the wire format)
+    with no room for one, so the only way to confirm a write did anything
+    is to watch the physical car/track, not this page.
+  </p>
+
+  <h3>Speed / brake / fuel per address</h3>
+  <table id="write-table">
+    <thead><tr><th>Addr</th><th colspan="2">Speed (0-15)</th><th colspan="2">Brake (0-15)</th><th colspan="2">Fuel override (0-15)</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <h3>Buttons</h3>
+  <div id="button-row" class="button-row"></div>
+
+  <h3>Ignore controllers (bitmask)</h3>
+  <p class="muted">Tells the CU to ignore the checked addresses' own physical/wireless input entirely -- unconfirmed against real hardware.</p>
+  <div id="ignore-checks" class="button-row"></div>
+  <button id="ignore-send-btn">Send ignore mask</button>
+
+  <h3>CU timer / Position Tower</h3>
+  <div class="button-row">
+    <button id="reset-cu-btn">Reset CU timer</button>
+    <button id="clear-position-btn">Clear Position Tower</button>
+  </div>
+  <div class="button-row">
+    <label>Addr <input id="pos-addr" type="number" min="0" max="7" value="0" style="width:3.5rem"></label>
+    <label>Position (1-8) <input id="pos-value" type="number" min="1" max="8" value="1" style="width:3.5rem"></label>
+    <button id="pos-send-btn">Set position</button>
+    <label>Lap <input id="lap-value" type="number" min="0" max="255" value="0" style="width:4rem"></label>
+    <button id="lap-send-btn">Set lap</button>
+  </div>
+</section>
+
+<section id="command-log-panel">
+  <h2>Command log (most recent first)</h2>
+  <div id="command-log"></div>
+</section>
 
 <section id="raw-panel">
   <h2>Raw data stream (carreralib's own wire-level send/receive log)</h2>

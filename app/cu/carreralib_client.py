@@ -21,7 +21,11 @@ Confirmed from carreralib.cu.ControlUnit source:
     relying on it (see docs/reference/protocol-notes.md). Addresses 6
     (autonomous car) and 7 (pace car) have no physical controller and are
     the confirmed-safe targets for software speed control.
-  - start() presses the CU's own START/ENTER button.
+  - press(START_ENTER_BUTTON_ID) presses the CU's own START/ENTER button.
+    Its effect on Status.start is CONFIRMED by direct observation on real
+    hardware: 0 = racing, 1 = stopped, 2..7 = the light sequence stepping
+    up after pressing it while stopped, then back to 0 -- see
+    app/cu/protocol.py's START_LABELS/describe_start().
 """
 from __future__ import annotations
 
@@ -228,18 +232,29 @@ class CarreralibCUClient(CUClient):
         assert self._cu is not None, "not connected"
         self._cu.setfuel(address, max(0, min(15, value)))
 
-    def start(self) -> None:
+    def press(self, button_id: int) -> None:
         assert self._cu is not None, "not connected"
-        self._cu.start()
+        self._cu.press(button_id)
 
-    def press_pace_car_esc(self) -> None:
+    def ignore(self, mask: int) -> None:
         assert self._cu is not None, "not connected"
-        self._cu.press(self._cu.PACE_CAR_ESC_BUTTON_ID)
+        self._cu.ignore(mask)
+
+    def reset(self) -> None:
+        assert self._cu is not None, "not connected"
+        self._cu.reset()
 
     def set_position(self, address: int, position: int) -> None:
-        """Drive an official Carrera Position Tower accessory, if attached."""
         assert self._cu is not None, "not connected"
         self._cu.setpos(address, position)
+
+    def set_lap(self, value: int) -> None:
+        assert self._cu is not None, "not connected"
+        self._cu.setlap(value)
+
+    def clear_position(self) -> None:
+        assert self._cu is not None, "not connected"
+        self._cu.clrpos()
 
     def version(self) -> str:
         assert self._cu is not None, "not connected"

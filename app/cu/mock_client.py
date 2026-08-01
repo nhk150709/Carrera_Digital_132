@@ -11,7 +11,13 @@ import time
 from typing import Callable
 
 from app.cu.base import CUClient
-from app.cu.protocol import Status, TimerEvent
+from app.cu.protocol import (
+    START_ENTER_BUTTON_ID,
+    START_RACING,
+    START_STOPPED,
+    Status,
+    TimerEvent,
+)
 
 REFERENCE_SPEED = 10
 DEFAULT_SPEED = 10
@@ -32,6 +38,17 @@ class MockCUClient(CUClient):
         self._now = 0.0
         self._connected = False
         self.start_call_count = 0  # lets tests confirm the CU's start/pause is actually commanded
+        # Mock begins "stopped" -- matches the real CU's likely power-on
+        # state. See protocol.py's START_LABELS for the confirmed meaning
+        # of these values; the mock only simulates the two endpoints (0
+        # racing / 1 stopped), skipping the real 2..7 light-sequence
+        # animation since its exact timing doesn't matter for testing the
+        # UI wiring against a mock.
+        self._start_value = START_STOPPED
+        self._mode = 0
+        self._ignore_mask = 0
+        self.last_button_pressed: int | None = None
+        self.press_count = 0
 
     def describe(self) -> str:
         return "MOCK (simulated CU -- no real hardware connected)"
@@ -74,7 +91,8 @@ class MockCUClient(CUClient):
     def read_status(self) -> Status:
         fuel = tuple(self._fuel_override.get(a, self._fuel[a]) for a in self.addresses)
         pit = tuple(self._pit[a] for a in self.addresses)
-        return Status(fuel=fuel, pit=pit, start=0, mode=0, display=len(self.addresses))
+        return Status(fuel=fuel, pit=pit, start=self._start_value, mode=self._mode,
+                       display=len(self.addresses))
 
     def poll_timer(self) -> list[TimerEvent]:
         return self.tick(self.clock())
@@ -88,6 +106,35 @@ class MockCUClient(CUClient):
     def set_fuel_display(self, address: int, value: int) -> None:
         self._fuel_override[address] = max(0, min(15, value))
 
-    def start(self) -> None:
-        self.start_call_count += 1
-        self.arm(self.clock())
+    def press(self, button_id: int) -> None:
+        self.press_count += 1
+        self.last_button_pressed = button_id
+        if button_id == START_ENTER_BUTTON_ID:
+            self.start_call_count += 1
+            if self._start_value == START_RACING:
+                self._start_value = START_STOPPED
+                self._next_crossing.clear()
+            else:
+                self._start_value = START_RACING
+                self.arm(self.clock())
+        # Other buttons (PACE_CAR_ESC/SPEED/BRAKE/FUEL/CODE) have nothing
+        # local to simulate -- only real hardware has a physical response
+        # to observe for those.
+
+    def ignore(self, mask: int) -> None:
+        self._ignore_mask = mask
+
+    def reset(self) -> None:
+        pass
+
+    def set_position(self, address: int, position: int) -> None:
+        pass
+
+    def set_lap(self, value: int) -> None:
+        pass
+
+    def clear_position(self) -> None:
+        pass
+
+    def version(self) -> str:
+        return "mock-1.0"
