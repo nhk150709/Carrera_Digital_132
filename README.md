@@ -140,6 +140,22 @@ different machines (and on macOS they're not real MAC addresses at all --
 see the note further down), so "auto" is more robust long-term than a
 hardcoded value even though it's slightly slower to start.
 
+**If you see a `TimeoutError` from `bleak` (e.g. "Exception in thread
+Thread-N" during connect) and the server seems to hang forever at
+"Waiting for application startup"**: that hang is now fixed (see
+`_construct_control_unit_with_timeout` in `app/cu/carreralib_client.py`) --
+`carreralib`'s own BLE connection thread has no timeout of its own on the
+underlying `bleak` connect, so a real connection failure previously left
+the app stuck forever with no error and no retry. It now gives up on a
+stuck attempt after 15s and retries (up to `ble_connect_attempts`, default
+4) instead, and connecting no longer blocks the server from starting up at
+all -- the page comes up immediately showing DISCONNECTED while connecting
+retries in the background. The underlying `TimeoutError` itself usually
+means one of: the CU/AppConnect adapter is out of range or powered off, or
+it's already connected to something else (BLE is single-connection only --
+e.g. the official Carrera app still open on a phone). Power-cycling the
+CU/AppConnect adapter and retrying is usually enough.
+
 **Finding the AppConnect adapter's BLE MAC address by hand** (only needed
 if you want to skip the auto-scan and pin a specific address), from the
 Pi:

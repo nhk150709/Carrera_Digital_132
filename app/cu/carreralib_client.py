@@ -83,6 +83,54 @@ def discover_cu_address(name: str = DEFAULT_CU_BLE_NAME, timeout: float = 6.0) -
     return found["address"]
 
 
+def _construct_control_unit_with_timeout(device: str, timeout: float = 15.0):
+    """carreralib.ble.BleakThread.start() waits on a threading.Event with
+    NO timeout of its own (BLEConnection.__init__ calls plain `t.start()`).
+    If the underlying bleak/BlueZ connect fails or times out internally
+    (observed in practice: a TimeoutError raised inside bleak's own
+    `async_timeout`), that background thread dies without ever calling
+    `.set()` on the event -- so the caller (carreralib.ControlUnit(device),
+    called from our connect() below) blocks forever. In practice this
+    showed up as the whole app hanging at FastAPI's "Waiting for
+    application startup" forever, with only a stray "Exception in thread
+    Thread-N" printed to stderr and no way for connect()'s own retry loop
+    below to ever run again.
+
+    Run the constructor in our own thread and bound how long we wait for
+    it, so a real BLE connection failure becomes a normal retryable error
+    (caught by the loop in connect()) instead of an indefinite hang. If it
+    does time out, the orphaned worker thread (and carreralib's own
+    dead-end thread inside it) leaks harmlessly in the background -- both
+    are daemon threads, so they don't block process exit.
+    """
+    import threading
+
+    result: dict[str, object] = {}
+
+    def worker() -> None:
+        import carreralib
+
+        try:
+            result["cu"] = carreralib.ControlUnit(device)
+        except Exception as exc:  # noqa: BLE001 -- re-raised in the caller's thread below
+            result["error"] = exc
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    thread.join(timeout)
+
+    if thread.is_alive():
+        raise TimeoutError(
+            f"connecting to BLE device {device} did not complete within {timeout}s -- "
+            "the device may be out of range, powered off, or already connected to "
+            "something else (e.g. a phone with the AppConnect app open); power-cycling "
+            "the CU/AppConnect adapter and retrying often clears this"
+        )
+    if "error" in result:
+        raise result["error"]  # type: ignore[misc]
+    return result["cu"]
+
+
 def _warm_ble_cache(address: str, timeout: float = 4.0) -> None:
     """On Linux, bleak's BlueZ backend can only connect to a device BlueZ
     has *recently* seen via a scan -- it resolves the address against
@@ -152,10 +200,10 @@ class CarreralibCUClient(CUClient):
         for attempt in range(1, ble_connect_attempts + 1):
             _warm_ble_cache(self.device)
             try:
-                self._cu = carreralib.ControlUnit(self.device)
+                self._cu = _construct_control_unit_with_timeout(self.device)
                 self._clock_offset_ms = None
                 return
-            except BleakDeviceNotFoundError as exc:
+            except (BleakDeviceNotFoundError, TimeoutError) as exc:
                 last_error = exc
         raise RuntimeError(
             f"could not connect to BLE device {self.device} after "

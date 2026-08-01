@@ -273,7 +273,12 @@ async def poll_loop(app: FastAPI) -> None:
 async def lifespan(app: FastAPI):
     _install_raw_logging()
     app.state.monitor = MonitorState()
-    app.state.monitor.try_connect(force=True)
+    # The first connect attempt happens on poll_loop's first tick below, not
+    # here -- connect() can take tens of seconds (BLE scan+retry) or, before
+    # the timeout fix in app/cu/carreralib_client.py, even hang indefinitely
+    # on a real BLE failure. Attempting it here would block FastAPI startup
+    # itself, contradicting build_cu_client()'s own stated intent that a
+    # startup failure shouldn't prevent the monitor UI from coming up.
 
     banner = f"  CU BACKEND: {app.state.monitor.cu.describe()}  "
     rule = "=" * len(banner)

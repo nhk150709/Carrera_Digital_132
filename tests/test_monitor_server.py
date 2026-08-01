@@ -271,7 +271,10 @@ def test_websocket_sends_initial_snapshot():
 
 def test_cu_write_endpoints_against_mock_backend():
     # The default test app runs the mock backend, which is always
-    # "connected" once try_connect() has run (triggered by lifespan on
+    # "connected" once try_connect() has run (triggered by poll_loop's
+    # first tick, itself started from lifespan on startup -- see
+    # app/network/server.py's lifespan(), which deliberately does NOT call
+    # try_connect() itself so a slow/hanging real connect can't block
     # startup) -- so these exercise the full HTTP -> MonitorState.run_write
     # -> CUClient path end to end, not just MonitorState in isolation.
     with make_client() as client:
