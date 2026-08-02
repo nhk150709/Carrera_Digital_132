@@ -181,8 +181,10 @@ class CarreralibCUClient(CUClient):
     def connect(self, ble_connect_attempts: int = 4) -> None:
         import carreralib  # lazy import: not a hard dependency for mock-mode use
 
+        just_discovered = False
         if self.device == AUTO_DISCOVER_SENTINEL:
             self.device = discover_cu_address()
+            just_discovered = True
 
         if not _looks_like_ble_address(self.device):
             self._cu = carreralib.ControlUnit(self.device)
@@ -197,20 +199,31 @@ class CarreralibCUClient(CUClient):
         #
         # Catches any Exception here, not just BleakDeviceNotFoundError/
         # TimeoutError: real hardware has been observed raising other
-        # bleak errors too (BleakDBusError "InProgress" when a stale
-        # connection attempt -- e.g. from another process, or our own
-        # previous retry's orphaned background thread, see
-        # _construct_control_unit_with_timeout's docstring -- is still
-        # live against the same address; BleakError "failed to discover
-        # services, device disconnected" when the connection drops mid
-        # service-discovery). Treating any single attempt's failure as
+        # bleak errors too (BleakDBusError "InProgress"/"br-connection-
+        # canceled", BleakError "failed to discover services, device
+        # disconnected" -- see _construct_control_unit_with_timeout's
+        # docstring for how a previous retry's orphaned background thread
+        # can cause these). Treating any single attempt's failure as
         # retryable (up to ble_connect_attempts) rather than aborting the
         # whole connect() call on the first attempt is strictly safer --
         # the caller (MonitorState.try_connect()) already treats a fully
         # exhausted connect() as non-fatal and retries again later anyway.
+        #
+        # Confirmed on real hardware: a bare, single
+        # `carreralib.ControlUnit(discover_cu_address())` call (one scan,
+        # then connect immediately, no extra warm-up scan) connects
+        # cleanly, while this app's connect() -- which used to *also* run
+        # _warm_ble_cache() (a second, immediate, redundant scan) right
+        # after discover_cu_address()'s own scan -- reliably hit
+        # "br-connection-canceled" / "failed to discover services" on the
+        # very first attempt. Skip the redundant warm-up scan on the
+        # first attempt specifically when the device was *just* resolved
+        # by discover_cu_address()'s own scan a moment ago -- only later
+        # retries (device potentially stale again by then) still warm it.
         last_error: Exception | None = None
         for attempt in range(1, ble_connect_attempts + 1):
-            _warm_ble_cache(self.device)
+            if not (attempt == 1 and just_discovered):
+                _warm_ble_cache(self.device)
             try:
                 self._cu = _construct_control_unit_with_timeout(self.device)
                 self._clock_offset_ms = None

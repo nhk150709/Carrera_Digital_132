@@ -63,3 +63,35 @@ def test_connect_resolves_auto_sentinel_before_connecting():
         discover.assert_called_once()
         control_unit.assert_called_once_with("EF:C4:35:38:1A:0B")
         assert client.device == "EF:C4:35:38:1A:0B"  # resolved, not left as "auto"
+
+
+def test_connect_skips_redundant_warmup_scan_right_after_auto_discovery():
+    """Confirmed on real hardware: a bare `carreralib.ControlUnit(addr)`
+    call right after discover_cu_address()'s own scan connects cleanly,
+    while adding a second, immediate, redundant _warm_ble_cache() scan
+    (as connect() used to do unconditionally) reliably caused BlueZ
+    errors ("br-connection-canceled", "failed to discover services") on
+    the very first attempt. The scan discover_cu_address() itself just
+    did is fresh enough -- don't scan again before the first connect."""
+    client = CarreralibCUClient(device=AUTO_DISCOVER_SENTINEL)
+    with patch("app.cu.carreralib_client.discover_cu_address", return_value="EF:C4:35:38:1A:0B"), \
+         patch("app.cu.carreralib_client._warm_ble_cache") as warm, \
+         patch("carreralib.ControlUnit") as control_unit:
+        client.connect()
+        warm.assert_not_called()
+        control_unit.assert_called_once_with("EF:C4:35:38:1A:0B")
+
+
+def test_connect_warms_cache_on_retry_after_auto_discovery_first_attempt_fails():
+    from bleak.exc import BleakDeviceNotFoundError
+
+    client = CarreralibCUClient(device=AUTO_DISCOVER_SENTINEL)
+    with patch("app.cu.carreralib_client.discover_cu_address", return_value="EF:C4:35:38:1A:0B"), \
+         patch("app.cu.carreralib_client._warm_ble_cache") as warm, \
+         patch("carreralib.ControlUnit") as control_unit:
+        control_unit.side_effect = [BleakDeviceNotFoundError("EF:C4:35:38:1A:0B", "not found"), object()]
+        client.connect(ble_connect_attempts=2)
+        # First attempt skips the redundant scan (just discovered); the
+        # retry, potentially stale by then, warms the cache once.
+        warm.assert_called_once_with("EF:C4:35:38:1A:0B")
+        assert control_unit.call_count == 2
