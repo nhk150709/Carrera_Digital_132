@@ -85,6 +85,26 @@ Key facts learned by actually installing and reading `carreralib` 1.0.3's
 source (more reliable than the web research below, which hit blocked
 pages on this point):
 
+- **CONFIRMED on real hardware, and important: an active BLE connection
+  (AppConnect adapter) to the CU jams the CU's own wireless controllers**
+  -- observed directly by the user (2026-08-02): while the monitor app
+  was connected over BLE, wireless controller input to the cars stopped
+  working. This is a hardware/RF-level interaction, not anything this
+  app's code does or could fix -- almost certainly the AppConnect
+  adapter's BLE radio and the CU's own wireless-controller radio share or
+  contend for the same 2.4GHz band close enough together to interfere.
+  **Practical consequence: BLE is not usable for actual racing with
+  wireless controllers plugged in** -- it's fine for monitoring-only
+  sessions with wired controllers, or for testing/development, but not
+  for the project's actual use case. This invalidates the "BLE as a
+  cable-free hub" framing in "Architecture implication" below -- **wired
+  PC-port serial is now the recommended transport**, not just the more
+  reliable one. Also see the BLE connection's own separate reliability
+  issues noted throughout this doc (needing `hciconfig hci0 down`/`up`
+  resets after heavy connect churn, `br-connection-canceled`/service-
+  discovery failures) -- between those and the jamming, BLE has not been
+  a good transport for this project on real hardware in practice, serial
+  has not yet been tried.
 - `ControlUnit.setspeed(address, value)` / `setbrake` / `setfuel` place
   **no address restriction beyond the protocol's own 0-7 range** — the
   library will happily send a command for addresses 0-5. This does **not**
@@ -446,11 +466,18 @@ Details, licenses to re-verify, and secondary German-language sources
 
 Because the CU only serves one connected client, a build with multiple
 devices (LED panel, lap timer, stop buttons, pace-car controller) must use
-a **single bridge/hub node** that owns the one CU connection (via PC port
-serial — BLE only if a wireless link is specifically needed) and fans
+a **single bridge/hub node** that owns the one CU connection and fans
 parsed events out to the other Arduino nodes over a separate local channel
 (I2C, UART bus, ESP-NOW/nRF24, etc.). Do not design any node to open its
 own independent connection to the CU.
+
+**Use PC-port serial for that one connection, not BLE** -- confirmed on
+real hardware that an active BLE connection to the CU jams its own
+wireless controllers (see the dedicated bullet above), which rules BLE
+out for any actual race with wireless controllers. BLE was originally
+framed here as an optional cable-free alternate transport; that framing
+is now wrong for this project's actual use case and is kept only as a
+record of the earlier (incorrect) assumption.
 
 ## Planned devices (from initial project scoping)
 
@@ -479,7 +506,8 @@ own independent connection to the CU.
    speed-command logic from.
 
 None of the five require a Raspberry Pi or BLE by necessity — Arduino +
-PC-port TTL serial covers all of them. BLE (AppConnect) is an optional
-alternate transport for the bridge node only, useful for a cable-free hub,
-not for talking to multiple peripherals — and a bare Arduino Uno/Nano has
-no BLE radio, so that would need an ESP32/Nano 33 BLE-class board anyway.
+PC-port TTL serial covers all of them. BLE (AppConnect) is confirmed to
+jam the CU's own wireless controllers while connected (see above) and is
+no longer recommended even as an optional alternate transport — moot
+anyway, since a bare Arduino Uno/Nano has no BLE radio and would need an
+ESP32/Nano 33 BLE-class board for it.

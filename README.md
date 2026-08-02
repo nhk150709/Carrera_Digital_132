@@ -120,6 +120,33 @@ to look up or paste in a MAC address again either.
 
 ### Connecting to the real CU (serial or the AppConnect BLE adapter)
 
+**Serial is recommended over BLE.** Confirmed on real hardware: an active
+BLE connection to the CU jams its own wireless controllers -- fine for a
+monitoring-only session with wired controllers, not usable for an actual
+race with wireless ones. BLE also needed several manual recovery steps
+during testing (`hciconfig hci0 down`/`up` resets after heavy connect
+churn; see the troubleshooting notes further down). If you can get a
+serial connection (the official Carrera PC-Unit adapter, item 30432, or a
+generic USB-TTL serial cable -- see wiring notes below), use it.
+
+**Wiring a serial connection on a Raspberry Pi (voltage note)**: do not
+wire the CU's PC port directly into the Pi's GPIO header -- the Pi's GPIO
+is 3.3V-only and not 5V-tolerant, while the CU's PC port is TTL serial
+("Arduino-UART-compatible" per the protocol research this project is
+built on, which implies 5V TTL logic since that's what an Arduino Uno
+uses). Feeding 5V into the Pi's GPIO risks damaging it. Instead:
+- Simplest: the official Carrera PC-Unit adapter (item 30432) is a USB
+  cable purpose-built for this port, voltage-matched by the manufacturer.
+- DIY: a generic USB-to-TTL serial adapter (FTDI/CP2102/CH340, a few
+  dollars) plugged into any Pi USB port -- the USB side is standard, and
+  you only wire the adapter's TTL RX/TX/GND lines to the CU's PC port,
+  never the Pi's own GPIO pins. Check the adapter has a voltage-select
+  jumper/variant (many do) and confirm the CU's actual TTL level with a
+  multimeter before connecting, rather than assuming.
+
+Either way it shows up as a device path (typically `/dev/ttyUSB0`) --
+point `CARRERA_RMS_CU_DEVICE` at it, no code changes needed.
+
 Set `CARRERA_RMS_CU_DEVICE` before starting the server -- no code editing
 needed. A serial device path (`/dev/ttyUSB0`) uses a wired connection; a
 MAC-address-shaped string (`aa:bb:cc:dd:ee:ff`) uses the AppConnect BLE
