@@ -132,6 +132,12 @@ class MonitorState:
         self.command_log: collections.deque[dict] = collections.deque(maxlen=COMMAND_LOG_MAXLEN)
         self.connect_attempts = 0
         self._last_connect_attempt = 0.0
+        # Guards try_connect_async() below -- a real connect attempt
+        # (especially BLE) can take tens of seconds. asyncio.Lock() binds
+        # lazily to whatever loop is running when first awaited, so it's
+        # safe to create here even though __init__ can run outside one
+        # (e.g. in tests).
+        self._connect_lock = asyncio.Lock()
 
     def log_command(self, description: str, ok: bool, error: str | None) -> None:
         self.command_log.appendleft({
@@ -176,10 +182,29 @@ class MonitorState:
             self.last_error = str(exc)
             logger.warning("CU connect failed (attempt %d): %s", self.connect_attempts, exc)
 
+    async def try_connect_async(self, loop: asyncio.AbstractEventLoop, force: bool = False) -> None:
+        """Runs try_connect() in a worker thread instead of the event
+        loop's own thread. A real connect attempt (BLE especially) has
+        been observed taking tens of seconds on flaky hardware -- running
+        it inline on the event loop, as this app originally did, froze
+        every other request, the WebSocket broadcast, and even Ctrl+C/
+        SIGINT handling for that whole duration (confirmed in practice:
+        the server wouldn't respond to repeated Ctrl+C while a connect
+        attempt was in flight). self._connect_lock serializes callers so
+        at most one real connect() ever runs at a time regardless of
+        caller (poll_loop's own auto-reconnect below, and the manual
+        /api/reconnect endpoint, both call this) -- two overlapping BLE
+        connect attempts against the same address is exactly what caused
+        real "InProgress"/"br-connection-canceled" BlueZ errors in
+        practice (see app/cu/carreralib_client.py), so this must never
+        run two at once no matter who's asking.
+        """
+        async with self._connect_lock:
+            await loop.run_in_executor(None, self.try_connect, force)
+
     def poll_once(self) -> None:
         if not self.connected:
-            self.try_connect()
-            return
+            return  # connecting (if due) happens out-of-band -- see poll_loop, which calls try_connect_async()
         try:
             for event in self.cu.poll_timer():
                 self.timer_log.appendleft({
@@ -260,8 +285,19 @@ manager = ConnectionManager()
 
 async def poll_loop(app: FastAPI) -> None:
     state: MonitorState = app.state.monitor
+    loop = asyncio.get_running_loop()
     while True:
         try:
+            if not state.connected and not state._connect_lock.locked():
+                # Fire-and-forget: runs in a worker thread (see
+                # try_connect_async's docstring) so a slow/failing real
+                # connect attempt never blocks this loop's own broadcast
+                # cadence, other requests, or shutdown. The lock check
+                # here is just to avoid uselessly scheduling a coroutine
+                # every ~50ms while one's already in flight -- the lock
+                # itself (inside try_connect_async) is what actually
+                # prevents overlapping connect() calls.
+                asyncio.ensure_future(state.try_connect_async(loop))
             state.poll_once()
             await manager.broadcast(state.snapshot())
         except Exception:
@@ -311,7 +347,12 @@ async def api_state(request: Request) -> dict:
 @app.post("/api/reconnect")
 async def api_reconnect(request: Request) -> dict:
     state: MonitorState = request.app.state.monitor
-    state.try_connect(force=True)
+    loop = asyncio.get_running_loop()
+    # Awaited, not fire-and-forget: this endpoint's contract is to report
+    # the outcome of the attempt it triggered. try_connect_async() still
+    # runs the actual connect() in a worker thread (see its docstring), so
+    # other requests/broadcasts stay responsive while this one waits.
+    await state.try_connect_async(loop, force=True)
     return {"ok": True, "connected": state.connected, "last_error": state.last_error}
 
 

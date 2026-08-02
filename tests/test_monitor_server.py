@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -147,6 +149,66 @@ def test_try_connect_respects_retry_interval_unless_forced():
     assert cu.connect_calls == 2
 
 
+def test_try_connect_async_runs_connect_off_the_event_loop_thread():
+    """The whole point of try_connect_async: connect() must run in a
+    worker thread, not block the calling coroutine's own thread. Proven
+    here by having the fake connect() record which thread it ran on."""
+    import threading
+
+    cu = FakeCU()
+    calling_thread = threading.current_thread()
+    connect_thread: list[threading.Thread] = []
+    original_connect = cu.connect
+
+    def recording_connect():
+        connect_thread.append(threading.current_thread())
+        original_connect()
+
+    cu.connect = recording_connect
+    state = make_state(cu)
+
+    async def scenario() -> None:
+        loop = asyncio.get_running_loop()
+        await state.try_connect_async(loop, force=True)
+
+    asyncio.run(scenario())
+    assert state.connected is True
+    assert connect_thread[0] is not calling_thread
+
+
+def test_try_connect_async_serializes_overlapping_callers():
+    """Two overlapping try_connect_async() calls must never run connect()
+    concurrently -- a real overlapping BLE connect attempt is exactly
+    what caused actual BlueZ InProgress/canceled errors in practice (see
+    app/cu/carreralib_client.py). Proven by having the fake connect()
+    sleep, then asserting a second concurrent caller waited for it rather
+    than running at the same time."""
+    active = 0
+    max_concurrent = 0
+
+    class SlowFakeCU(FakeCU):
+        def connect(self):
+            nonlocal active, max_concurrent
+            self.connect_calls += 1
+            active += 1
+            max_concurrent = max(max_concurrent, active)
+            time.sleep(0.05)
+            active -= 1
+
+    state = make_state(SlowFakeCU())
+
+    async def scenario() -> None:
+        loop = asyncio.get_running_loop()
+        await asyncio.gather(
+            state.try_connect_async(loop, force=True),
+            state.try_connect_async(loop, force=True),
+        )
+
+    asyncio.run(scenario())
+    assert max_concurrent == 1
+    assert state.cu.connect_calls == 2  # both ran, just not at the same time
+
+
 def test_poll_once_populates_status_and_timer_log():
     status = Status(fuel=(15, 10), pit=(False, True), start=3, mode=PIT_LANE_MODE, display=2)
     events = [TimerEvent(address=0, timestamp=1.5, sector=0), TimerEvent(address=1, timestamp=2.0, sector=2)]
@@ -181,6 +243,19 @@ def test_poll_once_tolerates_no_status_yet():
     state.poll_once()  # must not raise, and must not mark disconnected
     assert state.connected is True
     assert state.last_status is None
+
+
+def test_poll_once_no_longer_triggers_connect_when_disconnected():
+    """Connecting now happens out-of-band via poll_loop -> try_connect_async
+    (see app/network/server.py), specifically so a slow/hanging real
+    connect attempt can't block the poll loop (or anything else on the
+    event loop). poll_once() itself must be a pure, fast, synchronous
+    no-op when disconnected -- it must never call connect() directly."""
+    cu = FakeCU()
+    state = make_state(cu)
+    assert state.connected is False
+    state.poll_once()
+    assert cu.connect_calls == 0
 
 
 def test_snapshot_shape():
