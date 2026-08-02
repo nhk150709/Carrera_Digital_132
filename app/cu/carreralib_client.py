@@ -194,8 +194,20 @@ class CarreralibCUClient(CUClient):
         # attempt reaches it (observed in practice) -- so in addition to
         # warming the cache, retry the whole scan+connect sequence a
         # few times rather than failing on the first race.
-        from bleak.exc import BleakDeviceNotFoundError
-
+        #
+        # Catches any Exception here, not just BleakDeviceNotFoundError/
+        # TimeoutError: real hardware has been observed raising other
+        # bleak errors too (BleakDBusError "InProgress" when a stale
+        # connection attempt -- e.g. from another process, or our own
+        # previous retry's orphaned background thread, see
+        # _construct_control_unit_with_timeout's docstring -- is still
+        # live against the same address; BleakError "failed to discover
+        # services, device disconnected" when the connection drops mid
+        # service-discovery). Treating any single attempt's failure as
+        # retryable (up to ble_connect_attempts) rather than aborting the
+        # whole connect() call on the first attempt is strictly safer --
+        # the caller (MonitorState.try_connect()) already treats a fully
+        # exhausted connect() as non-fatal and retries again later anyway.
         last_error: Exception | None = None
         for attempt in range(1, ble_connect_attempts + 1):
             _warm_ble_cache(self.device)
@@ -203,7 +215,7 @@ class CarreralibCUClient(CUClient):
                 self._cu = _construct_control_unit_with_timeout(self.device)
                 self._clock_offset_ms = None
                 return
-            except (BleakDeviceNotFoundError, TimeoutError) as exc:
+            except Exception as exc:
                 last_error = exc
         raise RuntimeError(
             f"could not connect to BLE device {self.device} after "

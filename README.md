@@ -156,6 +156,29 @@ it's already connected to something else (BLE is single-connection only --
 e.g. the official Carrera app still open on a phone). Power-cycling the
 CU/AppConnect adapter and retrying is usually enough.
 
+**If you see `bleak.exc.BleakDBusError: [org.bluez.Error.InProgress]` and/or
+`BleakError: failed to discover services, device disconnected`**: this
+almost always means something else on the Pi is *also* holding or
+attempting a BLE connection to the CU at the same time -- BLE only
+supports one connection at a time. The most common cause is a leftover
+server process from an earlier run that's still running in the
+background (a telltale sign: if starting the server also fails with
+`address already in use` on port 8000, something is already running).
+Check and clean up first:
+
+```bash
+sudo lsof -i :8000        # or: ps aux | grep uvicorn
+kill <pid>                 # the leftover process
+ps aux | grep uvicorn      # confirm nothing's left
+```
+
+Also make sure nothing else -- a phone with the official Carrera app open,
+a second terminal, `bluetoothctl` -- is connected to the CU/AppConnect
+adapter at the same time. If it still happens with only one process
+running, BlueZ itself can get stuck holding a phantom connection state
+from an earlier failed attempt; clear it with
+`sudo systemctl restart bluetooth` and retry.
+
 **Finding the AppConnect adapter's BLE MAC address by hand** (only needed
 if you want to skip the auto-scan and pin a specific address), from the
 Pi:
