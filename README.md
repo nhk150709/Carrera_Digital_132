@@ -120,14 +120,23 @@ to look up or paste in a MAC address again either.
 
 ### Connecting to the real CU (serial or the AppConnect BLE adapter)
 
-**Serial is recommended over BLE.** Confirmed on real hardware: an active
-BLE connection to the CU jams its own wireless controllers -- fine for a
-monitoring-only session with wired controllers, not usable for an actual
-race with wireless ones. BLE also needed several manual recovery steps
-during testing (`hciconfig hci0 down`/`up` resets after heavy connect
-churn; see the troubleshooting notes further down). If you can get a
-serial connection (the official Carrera PC-Unit adapter, item 30432, or a
-generic USB-TTL serial cable -- see wiring notes below), use it.
+**Serial is somewhat preferred over BLE, but not because of interference
+with wireless controllers** -- an earlier version of this doc claimed BLE
+jammed wireless controllers; that was a misdiagnosis, since retested with
+the Pi fully powered off and the CU's Bluetooth module physically removed
+and controllers *still* failed. The real cause was the CU's own
+wireless-controller RF **channel** happening to sit on one (channel 1,
+also affecting channel 2) with unrelated ambient 2.4GHz interference --
+switching the CU's wireless channel (to 4) fixed it, nothing to do with
+this app, BLE, or the Pi. **If wireless controllers ever act up, try a
+different channel on the CU before suspecting this app.** The actual
+reason to prefer serial is plainer: BLE needed several manual recovery
+steps during testing (`hciconfig hci0 down`/`up` resets after heavy
+connect churn; see the troubleshooting notes further down) that serial
+hasn't required. If you can get a serial connection (the official Carrera
+PC-Unit adapter, item 30432, or a generic USB-TTL serial cable -- see
+wiring notes below), it's the more hassle-free option, but BLE is not
+disqualified.
 
 **Wiring a serial connection on a Raspberry Pi (voltage note)**: do not
 wire the CU's PC port directly into the Pi's GPIO header -- the Pi's GPIO

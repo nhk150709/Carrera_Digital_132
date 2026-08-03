@@ -85,26 +85,30 @@ Key facts learned by actually installing and reading `carreralib` 1.0.3's
 source (more reliable than the web research below, which hit blocked
 pages on this point):
 
-- **CONFIRMED on real hardware, and important: an active BLE connection
-  (AppConnect adapter) to the CU jams the CU's own wireless controllers**
-  -- observed directly by the user (2026-08-02): while the monitor app
-  was connected over BLE, wireless controller input to the cars stopped
-  working. This is a hardware/RF-level interaction, not anything this
-  app's code does or could fix -- almost certainly the AppConnect
-  adapter's BLE radio and the CU's own wireless-controller radio share or
-  contend for the same 2.4GHz band close enough together to interfere.
-  **Practical consequence: BLE is not usable for actual racing with
-  wireless controllers plugged in** -- it's fine for monitoring-only
-  sessions with wired controllers, or for testing/development, but not
-  for the project's actual use case. This invalidates the "BLE as a
-  cable-free hub" framing in "Architecture implication" below -- **wired
-  PC-port serial is now the recommended transport**, not just the more
-  reliable one. Also see the BLE connection's own separate reliability
-  issues noted throughout this doc (needing `hciconfig hci0 down`/`up`
-  resets after heavy connect churn, `br-connection-canceled`/service-
-  discovery failures) -- between those and the jamming, BLE has not been
-  a good transport for this project on real hardware in practice, serial
-  has not yet been tried.
+- **RETRACTED -- BLE does NOT jam the CU's wireless controllers; that was
+  a misdiagnosis, root-caused and corrected same-day (2026-08-03).** An
+  earlier version of this doc claimed an active BLE connection to the CU
+  jammed its own wireless controllers, based on the user observing
+  controllers fail while the app was BLE-connected. Properly isolated
+  with a controlled test: controllers *still* failed with the Raspberry
+  Pi fully powered off and the CU's AppConnect/Bluetooth module
+  physically removed -- which proves it couldn't have been BLE-related,
+  since neither can emit any RF at all in that state. The actual cause:
+  the CU's own wireless-controller RF **channel** (a real setting on the
+  Carrera Digital wireless system itself, independent of the PC-port/BLE
+  protocol this app talks to) happened to be on channel 1, which was
+  experiencing unrelated ambient 2.4GHz interference (channel 2 also
+  affected; channel 4 clean) -- switching the CU's wireless channel fixed
+  it immediately. Pure coincidence of timing with this project's BLE
+  testing, not a real interaction with anything this app or the Pi does.
+  BLE's own separate reliability issues (needing `hciconfig hci0 down`/
+  `up` resets after heavy connect churn, `BleakDBusError`/service-
+  discovery failures during rapid reconnects -- see the troubleshooting
+  notes in README.md) are still real and still make serial the more
+  robust transport in practice, but "BLE jams controllers" is not a valid
+  reason to avoid it -- if wireless controllers ever act up again on real
+  hardware, check the CU's own wireless channel setting before suspecting
+  this app.
 - `ControlUnit.setspeed(address, value)` / `setbrake` / `setfuel` place
   **no address restriction beyond the protocol's own 0-7 range** — the
   library will happily send a command for addresses 0-5. This does **not**
@@ -471,13 +475,14 @@ parsed events out to the other Arduino nodes over a separate local channel
 (I2C, UART bus, ESP-NOW/nRF24, etc.). Do not design any node to open its
 own independent connection to the CU.
 
-**Use PC-port serial for that one connection, not BLE** -- confirmed on
-real hardware that an active BLE connection to the CU jams its own
-wireless controllers (see the dedicated bullet above), which rules BLE
-out for any actual race with wireless controllers. BLE was originally
-framed here as an optional cable-free alternate transport; that framing
-is now wrong for this project's actual use case and is kept only as a
-record of the earlier (incorrect) assumption.
+**Prefer PC-port serial over BLE for that one connection, but not because
+of jamming** (that theory was retracted -- see the dedicated bullet
+above). The real reason is BLE's own connection reliability on real
+hardware: it's needed manual recovery steps (`hciconfig hci0 down`/`up`
+resets, retrying past `BleakDBusError`/service-discovery failures) during
+this project's testing in a way serial hasn't been observed to. BLE
+remains a legitimate cable-free alternate transport if that reliability
+tradeoff is acceptable for a given build.
 
 ## Planned devices (from initial project scoping)
 
@@ -506,8 +511,8 @@ record of the earlier (incorrect) assumption.
    speed-command logic from.
 
 None of the five require a Raspberry Pi or BLE by necessity — Arduino +
-PC-port TTL serial covers all of them. BLE (AppConnect) is confirmed to
-jam the CU's own wireless controllers while connected (see above) and is
-no longer recommended even as an optional alternate transport — moot
-anyway, since a bare Arduino Uno/Nano has no BLE radio and would need an
-ESP32/Nano 33 BLE-class board for it.
+PC-port TTL serial covers all of them. BLE (AppConnect) is an optional
+alternate transport for the bridge node (does *not* jam wireless
+controllers -- see above), but has its own reliability tradeoffs on real
+hardware; a bare Arduino Uno/Nano has no BLE radio either way and would
+need an ESP32/Nano 33 BLE-class board for it.
